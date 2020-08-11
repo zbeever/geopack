@@ -16,4 +16,10 @@ Using the terminal, type `pip install {path-to-directory-containing-setup.py}` T
 
 ## Usage
 
-For usage and notes, please see Sheng Tian's excellent introduction: https://github.com/tsssss/geopack The only major difference in this modification is that igrf_gsm() accepts arguments returned from recalc(), while these parameters were previously set and read globally.
+For usage and notes, please see Sheng Tian's excellent introduction: https://github.com/tsssss/geopack
+
+The major differences are 
+
+1. The package is now named `ngeopack`
+
+2. `igrf_gsm()` accepts arguments returned from `recalc()`, while these parameters were previously set and read globally.
