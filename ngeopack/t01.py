@@ -1,5 +1,7 @@
 import numpy as np
+from numba import njit
 
+@njit
 def t01(parmod, ps, x, y, z):
     """
     Release date of this version: August 8, 2001.
@@ -70,7 +72,7 @@ def t01(parmod, ps, x, y, z):
     return bbx,bby,bbz
 
 
-
+@njit
 def extall(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,byimf,bzimf,vbimf1,vbimf2,ps,x,y,z):
     """
 
@@ -113,11 +115,11 @@ def extall(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,byimf,bzimf,vbimf1,vbimf2,ps,x,
     # common /rcpar/ sc_sy,sc_pr,phi
     # common /g/ g
     # common /rh0/ rh0
-    global dxshift1, dxshift2, d, deltady
-    global xkappa1, xkappa2
-    global sc_sy, sc_pr, phi
-    global g
-    global rh0
+    # global dxshift1, dxshift2, d, deltady
+    # global xkappa1, xkappa2
+    # global sc_sy, sc_pr, phi
+    # global g
+    # global rh0
 
 
     a0_a,a0_s0,a0_x0 = [34.586,1.1960,3.4397]   # Shue et al. parameters
@@ -211,7 +213,7 @@ def extall(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,byimf,bzimf,vbimf1,vbimf2,ps,x,
             d=a[27]
             deltady=a[28]
             # tail field (three modes)
-            bxt1,byt1,bzt1,bxt2,byt2,bzt2 = deformed(iopt,ps,xx,yy,zz)
+            bxt1,byt1,bzt1,bxt2,byt2,bzt2 = deformed(iopt,ps,xx,yy,zz, rh0, dxshift1, dxshift2, d, deltady, g)
 
         bxr11,byr11,bzr11, bxr12,byr12,bzr12, bxr21,byr21,bzr21, bxr22,byr22,bzr22 = [0.]*12
         if (iopgen == 0) | (iopgen == 3):
@@ -219,7 +221,7 @@ def extall(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,byimf,bzimf,vbimf1,vbimf2,ps,x,
             xkappa2=a[36]+a[37]*vbimf2
             # Birkeland field (two modes for r1 and two modes for r2)
             bxr11,byr11,bzr11, bxr12,byr12,bzr12, bxr21,byr21,bzr21, bxr22,byr22,bzr22 = \
-                birk_tot(iopb,ps,xx,yy,zz)
+                birk_tot(iopb,ps,xx,yy,zz, xkappa1, xkappa2)
 
         bxsrc,bysrc,bzsrc, bxprc,byprc,bzprc = [0.]*6
         if (iopgen == 0) | (iopgen == 4):
@@ -229,7 +231,7 @@ def extall(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,byimf,bzimf,vbimf1,vbimf2,ps,x,
             sc_sy=a[29]*(20/znam)**a[30]*xappa
             sc_pr=a[31]*(20/znam)**a[32]*xappa
             # shielded ring current (src and prc)
-            bxsrc,bysrc,bzsrc, bxprc,byprc,bzprc = full_rc(iopr,ps,xx,yy,zz)
+            bxsrc,bysrc,bzsrc, bxprc,byprc,bzprc = full_rc(iopr,ps,xx,yy,zz, sc_sy, sc_pr, phi) # GLOBAL: Needs to transmit sc_sy, sc_pr, and phi
 
         hximf,hyimf,hzimf = [0.,0,0]
         if (iopgen == 0) | (iopgen == 5):
@@ -286,7 +288,7 @@ def extall(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,byimf,bzimf,vbimf1,vbimf2,ps,x,
     return bx,by,bz
 
 
-
+@njit
 def shlcar3x3(x,y,z,ps):
     """
     This subroutine returns the shielding field for the earth's dipole, represented by
@@ -584,7 +586,8 @@ def shlcar3x3(x,y,z,ps):
     return bx, by, bz
 
 
-def deformed(iopt,ps,x,y,z):
+@njit
+def deformed(iopt,ps,x,y,z, rh0, dxshift1, dxshift2, d, deltady, g):
     """
     Calculates gsm components of two unit-amplitude tail field modes, taking into account
         both effects of dipole tilt: warping in y-z (done by the subroutine warped) and bending
@@ -598,7 +601,7 @@ def deformed(iopt,ps,x,y,z):
 
     #  rh0,rh1,rh2, and ieps control the tilt-related deformation of the tail field
     # common /rh0/ rh0
-    global rh0
+    # global rh0
     rh2,ieps = [-5.2,3]
 
     sps = np.sin(ps)
@@ -635,7 +638,7 @@ def deformed(iopt,ps,x,y,z):
     fac3 = dzasdx*dxasdy-dxasdx*dzasdy
 
     # deform:
-    bxas1,byas1,bzas1, bxas2,byas2,bzas2 = warped(iopt,ps,xas,y,zas)
+    bxas1,byas1,bzas1, bxas2,byas2,bzas2 = warped(iopt,ps,xas,y,zas, dxshift1, dxshift2, d, deltady, g)
 
     bx1=bxas1*dzasdz-bzas1*dxasdz +byas1*fac1
     by1=byas1*fac2
@@ -648,7 +651,8 @@ def deformed(iopt,ps,x,y,z):
     return bx1,by1,bz1, bx2,by2,bz2
 
 
-def warped(iopt,ps, x,y,z):
+@njit
+def warped(iopt,ps, x,y,z, dxshift1, dxshift2, d, deltady, g):
     """
     Calculates GSM components of the warped field for two tail unit modes. The warping deformation
     is imposed on the unwarped field, computed by the subroutine "unwarped". The warping parameter
@@ -661,7 +665,7 @@ def warped(iopt,ps, x,y,z):
     """
 
     # common /g/ g
-    global g
+    # global g
     dgdx,xl,dxldx = [0.,20,0]
 
     sps=np.sin(ps)
@@ -689,7 +693,7 @@ def warped(iopt,ps, x,y,z):
     yas=rho*cf
     zas=rho*sf
 
-    bx_as1,by_as1,bz_as1, bx_as2,by_as2,bz_as2 = unwarped(iopt,x,yas,zas)
+    bx_as1,by_as1,bz_as1, bx_as2,by_as2,bz_as2 = unwarped(iopt,x,yas,zas, dxshift1, dxshift2, d, deltady)
 
     brho_as =  by_as1*cf+bz_as1*sf      # deform the 1st mode
     bphi_as = -by_as1*sf+bz_as1*cf
@@ -710,8 +714,8 @@ def warped(iopt,ps, x,y,z):
     return bx1,by1,bz1, bx2,by2,bz2
 
 
-
-def unwarped(iopt, x,y,z):
+@njit
+def unwarped(iopt, x,y,z, dxshift1, dxshift2, d, deltady):
     """
     Calculates GSM components of the shielded field of two tail modes with unit amplitudes, without any
         warping or bending. Nonlinear parameters of the modes are forwarded here via a common block /tail/.
@@ -721,7 +725,7 @@ def unwarped(iopt, x,y,z):
     """
 
     # common /tail/ dxshift1,dxshift2,d,deltady
-    global dxshift1, dxshift2, d, deltady
+    # global dxshift1, dxshift2, d, deltady
 
     deltadx1,alpha1,xshift1 = [1.,1.1,6]
     deltadx2,alpha2,xshift2 = [0.,.25,4]
@@ -786,7 +790,7 @@ def unwarped(iopt, x,y,z):
     return bx1,by1,bz1, bx2,by2,bz2
 
 
-
+@njit
 def shlcar5x5(a,x,y,z,dshift):
     """
     This code returns the shielding field represented by  5x5=25 "cartesian" harmonics
@@ -830,6 +834,7 @@ def shlcar5x5(a,x,y,z,dshift):
     return dhx,dhy,dhz
 
 
+@njit
 def taildisk(d0,deltadx,deltady, x,y,z):
     """
     This subroutine computes the components of the tail current field, similar to that described by
@@ -904,8 +909,8 @@ def taildisk(d0,deltadx,deltady, x,y,z):
     return dbx, dby, dbz
 
 
-
-def birk_tot(iopb,ps,x,y,z):
+@njit
+def birk_tot(iopb,ps,x,y,z, xkappa1, xkappa2):
     """
     
     :param iopb: birkeland field mode flag:
@@ -917,8 +922,8 @@ def birk_tot(iopb,ps,x,y,z):
 
     # common /birkpar/ xkappa1,xkappa2   !  input parameters, specified from s/r extall
     # common /dphi_b_rho0/ dphi,b,rho_0,xkappa ! parameters, controlling the day-night asymmetry of f.a.c.
-    global xkappa1, xkappa2
-    global dphi, b, rho_0, xkappa
+    # global xkappa, rho_0, dphi, b
+    # global xkappa1, xkappa2
 
     sh11 = np.array([
         46488.84663,-15541.95244,-23210.09824,-32625.03856,-109894.4551,
@@ -1002,14 +1007,14 @@ def birk_tot(iopb,ps,x,y,z):
     bx11,by11,bz11, bx12,by12,bz12, bx21,by21,bz21, bx22,by22,bz22 = [0]*12
 
     if (iopb == 0) | (iopb == 1):
-        fx11,fy11,fz11 = birk_1n2(1,1,ps,x,y,z) # region 1, mode 1
+        fx11,fy11,fz11 = birk_1n2(1,1,ps,x,y,z, xkappa) # region 1, mode 1
         hx11,hy11,hz11 = birk_shl(sh11,ps,x_sc,x,y,z)
         bx11=fx11+hx11
         by11=fy11+hy11
         bz11=fz11+hz11
 
 
-        fx12,fy12,fz12 = birk_1n2(1,2,ps,x,y,z) # region 1, mode 2
+        fx12,fy12,fz12 = birk_1n2(1,2,ps,x,y,z, xkappa) # region 1, mode 2
         hx12,hy12,hz12 = birk_shl(sh12,ps,x_sc,x,y,z)
         bx12=fx12+hx12
         by12=fy12+hy12
@@ -1019,13 +1024,13 @@ def birk_tot(iopb,ps,x,y,z):
     x_sc=xkappa2-1.0    # forwarded in birk_shl
 
     if (iopb == 0) | (iopb == 2):
-        fx21,fy21,fz21 = birk_1n2(2,1,ps,x,y,z) # region 2, mode 1
+        fx21,fy21,fz21 = birk_1n2(2,1,ps,x,y,z, xkappa) # region 2, mode 1
         hx21,hy21,hz21 = birk_shl(sh21,ps,x_sc,x,y,z)
         bx21=fx21+hx21
         by21=fy21+hy21
         bz21=fz21+hz21
 
-        fx22,fy22,fz22 = birk_1n2(2,2,ps,x,y,z) # region 2, mode 2
+        fx22,fy22,fz22 = birk_1n2(2,2,ps,x,y,z, xkappa) # region 2, mode 2
         hx22,hy22,hz22 = birk_shl(sh22,ps,x_sc,x,y,z)
         bx22=fx22+hx22
         by22=fy22+hy22
@@ -1034,8 +1039,8 @@ def birk_tot(iopb,ps,x,y,z):
     return bx11,by11,bz11, bx12,by12,bz12, bx21,by21,bz21, bx22,by22,bz22
 
 
-
-def birk_1n2(numb,mode,ps,x,y,z):        # NB# 6, p.60
+@njit
+def birk_1n2(numb,mode,ps,x,y,z, xkappa):        # NB# 6, p.60
     """
     Calculates components of region 1/2 field in spherical coords. Derived from the s/r dipdef2c
         (which does the same job, but input/output there was in spherical coords, while here we use cartesian ones)
@@ -1053,8 +1058,8 @@ def birk_1n2(numb,mode,ps,x,y,z):        # NB# 6, p.60
     #  (3) rho_0:  a fixed parameter, defining the distance rho, at which the latitude shift gradually saturates and stops increasing; its value was assumed fixed, equal to 7.0.
     #  (4) xkappa: an overall scaling factor, which can be used for changing the size of the f.a.c. oval
 
-
-    global dtheta, m, dphi, b, rho_0, xkappa
+    # global dtheta, m, rho_0, dphi, b
+    # global xkappa
 
     # parameters of the tilt-dependent deformation of the untilted F.A.C. field
     beta = 0.9
@@ -1094,6 +1099,8 @@ def birk_1n2(numb,mode,ps,x,y,z):        # NB# 6, p.60
 
 
     m=mode
+    dtheta = 0.0
+    dphi = 0.0
     if numb == 1:
         dphi=0.055
         dtheta=0.06
@@ -1137,12 +1144,12 @@ def birk_1n2(numb,mode,ps,x,y,z):        # NB# 6, p.60
     zs=-rho*sphics
 
     if numb ==1:
-        if mode == 1: [bxs,byas,bzs] = twocones(a11,xs,ysc,zs)
-        elif mode == 2: [bxs,byas,bzs] = twocones(a12,xs,ysc,zs)
+        if mode == 1: [bxs,byas,bzs] = twocones(a11,xs,ysc,zs, dtheta, m)
+        elif mode == 2: [bxs,byas,bzs] = twocones(a12,xs,ysc,zs, dtheta, m)
         else: raise ValueError
     else:
-        if mode == 1: [bxs,byas,bzs] = twocones(a21,xs,ysc,zs)
-        elif mode == 2: [bxs,byas,bzs] = twocones(a22,xs,ysc,zs)
+        if mode == 1: [bxs,byas,bzs] = twocones(a21,xs,ysc,zs, dtheta, m)
+        elif mode == 2: [bxs,byas,bzs] = twocones(a22,xs,ysc,zs, dtheta, m)
         else: raise ValueError
 
     brhoas =  bxs*cphics-bzs*sphics
@@ -1159,8 +1166,8 @@ def birk_1n2(numb,mode,ps,x,y,z):        # NB# 6, p.60
     return bx,by,bz
 
 
-
-def twocones (a,x,y,z):
+@njit
+def twocones (a,x,y,z, dtheta, m):
     """
     Adds fields from two cones (northern and southern), with a proper symmetry of the current and field,
         corresponding to the region 1 Birkeland currents. (NB #6, p.58).
@@ -1170,15 +1177,17 @@ def twocones (a,x,y,z):
     :return: bx,by,bz. Field components in GSM system, in nT.
     """
 
-    bxn,byn,bzn = one_cone(a,x, y, z)
-    bxs,bys,bzs = one_cone(a,x,-y,-z)
+    bxn,byn,bzn = one_cone(a,x, y, z, dtheta, m) # Needs to transmit dtheta and m
+    bxs,bys,bzs = one_cone(a,x,-y,-z, dtheta, m) # Needs to transmit dtheta and m
     bx=bxn-bxs
     by=byn+bys
     bz=bzn+bzs
 
     return bx,by,bz
 
-def one_cone(a,x,y,z):
+
+@njit
+def one_cone(a,x,y,z, dtheta, m):
     """
     Returns field components for a deformed conical current system, fitted to a Biosavart field.
     Here only the northern cone is taken into account.
@@ -1190,7 +1199,7 @@ def one_cone(a,x,y,z):
 
     #  common /dtheta/ dtheta
     #  common /modenum/ m
-    global dtheta, m
+    # global dtheta, m
 
     # just for numerical differentiation
     dr = 1e-6
@@ -1239,6 +1248,8 @@ def one_cone(a,x,y,z):
 
     return bx,by,bz
 
+
+@njit
 def r_s(a,r,theta):
 
     # dimension a(31)
@@ -1246,6 +1257,8 @@ def r_s(a,r,theta):
         +(a[4]+a[5]/r+a[6]*r/np.sqrt(r**2+a[12]**2)+a[7]*r/(r**2+a[13]**2))*np.cos(theta) \
         +(a[8]*r/np.sqrt(r**2+a[14]**2)+a[9]*r/(r**2+a[15]**2)**2)*np.cos(2*theta)
 
+
+@njit
 def theta_s(a,r,theta):
     # dimension a(31)
     return theta+(a[16]+a[17]/r+a[18]/r**2+a[19]*r/np.sqrt(r**2+a[26]**2))*np.sin(theta) \
@@ -1253,6 +1266,7 @@ def theta_s(a,r,theta):
         +(a[23]+a[24]/r+a[25]*r/(r**2+a[29]**2))*np.sin(3*theta)
 
 
+@njit
 def fialcos(r,theta,phi,n,theta0,dt):
     """
     Conical model of Birkeland current field; based on the old s/r fialco (of 1990-91) NB of 1985-86-88,
@@ -1334,8 +1348,7 @@ def fialcos(r,theta,phi,n,theta0,dt):
     return btheta, bphi
 
 
-
-
+@njit
 def birk_shl(a,ps,x_sc, x,y,z):
     """
     B due to the Birkeland current shield.
@@ -1433,8 +1446,8 @@ def birk_shl(a,ps,x_sc, x,y,z):
     return bx,by,bz
 
 
-
-def full_rc(iopr,ps,x,y,z):
+@njit
+def full_rc(iopr,ps,x,y,z, sc_sy, sc_pr, phi):
     """
     Calculates GSM field components of the symmetric (src) and partial (prc) components of the ring current
     :param iopr: a ring current calculation flag (for least-squares fitting only):
@@ -1450,7 +1463,7 @@ def full_rc(iopr,ps,x,y,z):
     # sc_sy and sc_pr are scaling factors for the symmetric and partial components: values larger than 1 result in spatially larger currents
     # phi is the rotation angle in radians of the partial ring current (measured from midnight toward dusk)
     # common /rcpar/ sc_sy,sc_pr,phi
-    global sc_sy, sc_pr, phi
+    # global sc_sy, sc_pr, phi
 
 
     # corrected values(as of may 2006)
@@ -1517,7 +1530,7 @@ def full_rc(iopr,ps,x,y,z):
     return bxsrc,bysrc,bzsrc,bxprc,byprc,bzprc
 
 
-
+@njit
 def src_prc(iopr,sc_sy,sc_pr,phi,ps, x,y,z):
     """
     Returns field components from a model ring current, including its symmetric part and a partial ring current,
@@ -1590,6 +1603,7 @@ def src_prc(iopr,sc_sy,sc_pr,phi,ps, x,y,z):
     return bxsrc,bysrc,bzsrc, bxprc,byprc,bzprc
 
 
+@njit
 def rc_symm(x,y,z):
     """
     Calculates the field components from a model ring current, due to its symmetric part.
@@ -1636,6 +1650,8 @@ def rc_symm(x,y,z):
 
     return bx, by, bz
 
+
+@njit
 def ap(r,sint,cost):
     """
     Calculates azimuthal component of the vector potential of the symmetric part of the model ring current.
@@ -1737,6 +1753,7 @@ def ap(r,sint,cost):
     return ap
 
 
+@njit
 def prc_symm(x,y,z):
     """
     Calculates the field components from a model ring current, due to a partial ring current.
@@ -1783,6 +1800,8 @@ def prc_symm(x,y,z):
 
     return bx, by, bz
 
+
+@njit
 def apprc(r,sint,cost):
     """
     Calculates azimuthal component of the vector potential of the symmetric part of the model partial ring current.
@@ -1887,6 +1906,7 @@ def apprc(r,sint,cost):
     return apprc
 
 
+@njit
 def prc_quad(x,y,z):
     """
     Calculates components of the field from the "quadrupole" component of the partial ring current.
@@ -1945,6 +1965,8 @@ def prc_quad(x,y,z):
 
     return bx,by,bz
 
+
+@njit
 def br_prc_q(r,sint,cost):
     """
     Calculates the radial component of the "quadrupole" part of the model partial ring current.
@@ -2047,6 +2069,8 @@ def br_prc_q(r,sint,cost):
 
     return br_prc_q
 
+
+@njit
 def bt_prc_q(r,sint,cost):
     """
     Calculates the theta component of the "quadrupole" part of the model partial ring current.
@@ -2141,6 +2165,8 @@ def bt_prc_q(r,sint,cost):
 
     return bt_prc_q
 
+
+@njit
 def ffs(a, a0, da):
     sq1 = np.sqrt((a + a0) ** 2 + da ** 2)
     sq2 = np.sqrt((a - a0) ** 2 + da ** 2)
@@ -2151,6 +2177,7 @@ def ffs(a, a0, da):
     return f, fa, fs
 
 
+@njit
 def rc_shield(a,ps,x_sc,x,y,z):
     """
     B due to the ring current shield.
@@ -2251,6 +2278,7 @@ def rc_shield(a,ps,x_sc,x,y,z):
     return bx, by, bz
 
 
+@njit
 def dipole(ps, x, y, z):
     """
     Calculates GSM components of a geo-dipole field with the dipole moment corresponding to the epoch of 2000.

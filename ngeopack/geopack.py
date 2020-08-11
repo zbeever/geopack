@@ -1,7 +1,9 @@
 import numpy as np
-from geopack import t89,t96,t01,t04
+from ngeopack import t89, t96, t01, t04
 import os.path
 import datetime
+
+from numba import jit, njit
 
 def init_igrf():
     """
@@ -9,7 +11,7 @@ def init_igrf():
     Should be called once and only once when importing the geopack module.
     """
 
-    global igrf, nmn,mns, nyear,years,yruts
+    global igrf, nmn, mns, nyear, years, yruts
 
     print('Load IGRF coefficients ...')
 
@@ -52,11 +54,12 @@ def init_igrf():
     years[-1] += 5
     igrf[:, -1, :] = igrf[:, -2, :] + igrf[:, -1, :] * 5
     yruts = np.empty(nyear, dtype=float)
-    t0_datetime = datetime.datetime(1970,1,1)
+    t0_datetime = datetime.datetime(1970, 1, 1)
     for i in range(nyear):
-        yruts[i] = (datetime.datetime(years[i],1,1)-t0_datetime).total_seconds()
+        yruts[i] = (datetime.datetime(years[i], 1, 1) -
+                    t0_datetime).total_seconds()
     # separate g/h
-    igrf = {'g': igrf[:,:,0], 'h': igrf[:,:,1]}
+    igrf = {'g': igrf[:, :, 0], 'h': igrf[:, :, 1]}
 
 
 def load_igrf(ut):
@@ -67,20 +70,24 @@ def load_igrf(ut):
     """
 
     # igrf should be initilized already.
-    global igrf, nmn,nyear, mns, years, yruts
-    try: isinstance(igrf, dict)
-    except: init_igrf()
+    global igrf, nmn, nyear, mns, years, yruts
+    try:
+        isinstance(igrf, dict)
+    except:
+        init_igrf()
 
     # locate the two years of interest.
-    if ut <= yruts[0]: yridx = 0
-    elif ut >= yruts[-1]: yridx = -2
+    if ut <= yruts[0]:
+        yridx = 0
+    elif ut >= yruts[-1]:
+        yridx = -2
     else:
         yridx = np.argwhere(yruts <= ut)[-1]
 
-    g0 = np.squeeze(igrf['g'][:,yridx])
-    h0 = np.squeeze(igrf['h'][:,yridx])
-    g1 = np.squeeze(igrf['g'][:,yridx+1])
-    h1 = np.squeeze(igrf['h'][:,yridx+1])
+    g0 = np.squeeze(igrf['g'][:, yridx])
+    h0 = np.squeeze(igrf['h'][:, yridx])
+    g1 = np.squeeze(igrf['g'][:, yridx+1])
+    h1 = np.squeeze(igrf['h'][:, yridx+1])
 
     ut0 = yruts[yridx]
     ut1 = yruts[yridx+1]
@@ -90,7 +97,8 @@ def load_igrf(ut):
     return g0*f0+g1*f1, h0*f0+h1*f1
 
 
-def igrf_gsw(xgsw,ygsw,zgsw):
+@njit
+def igrf_gsw(xgsw, ygsw, zgsw):
     """
     Calculates components of the main (internal) geomagnetic field in the geocentric solar
     magnetospheric coordinate system, using IAGA international geomagnetic reference model
@@ -105,12 +113,13 @@ def igrf_gsw(xgsw,ygsw,zgsw):
     :param xgsw,ygsw,zgsw: cartesian GSW coordinates (in units Re=6371.2 km)
     :return: hxgsw,hygsw,hzgsw. Cartesian GSW components of the main geomagnetic field in nanotesla
     """
-    xgsm,ygsm,zgsm = gswgsm(xgsw,ygsw,zgsw, 1)
-    bxgsm,bygsm,bzgsm = igrf_gsm(xgsm,ygsm,zgsm)
-    return gswgsm(bxgsm,bygsm,bzgsm, -1)
+    xgsm, ygsm, zgsm = gswgsm(xgsw, ygsw, zgsw, 1)
+    bxgsm, bygsm, bzgsm = igrf_gsm(xgsm, ygsm, zgsm)
+    return gswgsm(bxgsm, bygsm, bzgsm, -1)
 
 
-def igrf_gsm(xgsm,ygsm,zgsm):
+@njit
+def igrf_gsm(xgsm, ygsm, zgsm, a, g, h, rec):
     """
     Calculates components of the main (internal) geomagnetic field in the geocentric solar
     magnetospheric coordinate system, using IAGA international geomagnetic reference model
@@ -126,14 +135,15 @@ def igrf_gsm(xgsm,ygsm,zgsm):
     :return: hxgsm,hygsm,hzgsm. Cartesian GSM components of the main geomagnetic field in nanotesla
     """
 
-    xgeo,ygeo,zgeo = geogsm(xgsm,ygsm,zgsm, -1)
-    r,theta,phi = sphcar(xgeo,ygeo,zgeo, -1)
-    br,btheta,bphi = igrf_geo(r,theta,phi)
-    bxgeo,bygeo,bzgeo = bspcar(theta,phi,br,btheta,bphi)
-    return geogsm(bxgeo,bygeo,bzgeo, 1)
+    xgeo, ygeo, zgeo = geogsm(xgsm, ygsm, zgsm, -1, a)
+    r, theta, phi = sphcar(xgeo, ygeo, zgeo, -1)
+    br, btheta, bphi = igrf_geo(r, theta, phi, g, h, rec)
+    bxgeo, bygeo, bzgeo = bspcar(theta, phi, br, btheta, bphi)
+    return geogsm(bxgeo, bygeo, bzgeo, 1, a)
 
 
-def igrf_geo(r,theta,phi):
+@njit
+def igrf_geo(r, theta, phi, g, h, rec):
     """
     Calculates components of the main (internal) geomagnetic field in the spherical geographic
     (geocentric) coordinate system, using IAGA international geomagnetic reference model
@@ -151,46 +161,48 @@ def igrf_geo(r,theta,phi):
         (positive br outward, btheta southward, bphi eastward)
     """
 
-
     # common /geopack2/ g(105),h(105),rec(105)
-    global g, h, rec
+    # global g, h, rec
 
     ct = np.cos(theta)
     st = np.sin(theta)
     minst = 1e-5
-    if np.abs(st) < minst: smlst = True
-    else: smlst = False
+    if np.abs(st) < minst:
+        smlst = True
+    else:
+        smlst = False
 
     # In this new version, the optimal value of the parameter nm (maximal order of the spherical
     # harmonic expansion) is not user-prescribed, but calculated inside the subroutine, based
     # on the value of the radial distance r:
-    irp3 = np.int64(r+2)
-    nm = np.int64(3+30/irp3)
-    if nm > 13: nm = 13
-    k = nm+1
+    irp3 = np.int64(r + 2)
+    nm = np.int64(3 + 30 / irp3)
+    if nm > 13:
+        nm = 13
+    k = nm + 1
 
     # r dependence is encapsulated here.
     a = np.empty(k)
     b = np.empty(k)
-    ar = 1/r        # a/r
-    a[0] = ar*ar    # a[n] = (a/r)^(n+2).
+    ar = 1 / r        # a/r
+    a[0] = ar * ar    # a[n] = (a/r)^(n+2).
     b[0] = a[0]     # b[n] = (n+1)(a/r)^(n+2)
-    for n in range(1,k):
-        a[n] = a[n-1]*ar
-        b[n] = a[n]*(n+1)
 
+    for n in range(1, k):
+        a[n] = a[n - 1] * ar
+        b[n] = a[n] * (n + 1)
 
     # t - short for theta, f - short for phi.
-    br,bt,bf = [0.]*3
-    d,p = [0.,1]
+    br, bt, bf = [0.] * 3
+    d, p = [0., 1]
 
     # m = 0. P^n,0
     m = 0
-    smf,cmf = [0.,1]
-    p1,d1,p2,d2 = [p,d,0.,0]
+    smf, cmf = [0., 1]
+    p1, d1, p2, d2 = [p, d, 0., 0]
     l0 = 0
     mn = l0
-    for n in range(m,k):
+    for n in range(m, k):
         w = g[mn]*cmf+h[mn]*smf
         br += b[n]*w*p1          # p1 is P^n,m.
         bt -= a[n]*w*d1          # d1 is dP^n,m/dt.
@@ -198,7 +210,7 @@ def igrf_geo(r,theta,phi):
         # Eq 16c and its derivative on theta.
         d0 = ct*d1-st*p1-xk*d2   # dP^n,m/dt = ct*dP^n-1,m/dt - st*P_n-1,m - K^n,m*dP^n-2,m/dt
         p0 = ct*p1-xk*p2         # P^n,m = ct*P^n-1,m - K^n,m*P^n-2,m
-        d2,p2,d1 = [d1,p1,d0]
+        d2, p2, d1 = [d1, p1, d0]
         p1 = p0
         mn += n+1
 
@@ -208,25 +220,26 @@ def igrf_geo(r,theta,phi):
 
     # Similarly for P^n,m
     l0 = 0
-    for m in range(1,k):        # sum over m
+    for m in range(1, k):        # sum over m
         smf = np.sin(m*phi)     # sin(m*phi)
         cmf = np.cos(m*phi)     # cos(m*phi)
-        p1,d1,p2,d2 = [p,d,0.,0]
+        p1, d1, p2, d2 = [p, d, 0., 0]
         tbf = 0.
         l0 += m+1
         mn = l0
-        for n in range(m,k):    # sum over n
-            w=g[mn]*cmf+h[mn]*smf   # [g^n,m*cos(m*phi)+h^n,m*sin(m*phi)]
+        for n in range(m, k):    # sum over n
+            w = g[mn]*cmf+h[mn]*smf   # [g^n,m*cos(m*phi)+h^n,m*sin(m*phi)]
             br += b[n]*w*p1
             bt -= a[n]*w*d1
             tp = p1
-            if smlst: tp = d1
+            if smlst:
+                tp = d1
             tbf += a[n]*(g[mn]*smf-h[mn]*cmf)*tp
             xk = rec[mn]
             d0 = ct*d1-st*p1-xk*d2   # dP^n,m/dt = ct*dP^n-1,m/dt - st*P_n-1,m - K^n,m*dP^n-2,m/dt
             p0 = ct*p1-xk*p2         # P^n,m = ct*P^n-1,m - K^n,m*P^n-2,m
-            d2,p2,d1 = [d1,p1,d0]
-            p1=p0
+            d2, p2, d1 = [d1, p1, d0]
+            p1 = p0
             mn += n+1
 
         d = st*d+ct*p
@@ -237,15 +250,16 @@ def igrf_geo(r,theta,phi):
         bf += tbf
 
     if smlst:
-        if ct < 0.: bf = -bf
-    else: bf /= st
+        if ct < 0.:
+            bf = -bf
+    else:
+        bf /= st
 
-    return br,bt,bf
+    return br, bt, bf
 
 
-
-
-def dip(xgsm,ygsm,zgsm):
+@njit
+def dip(xgsm, ygsm, zgsm):
     """
     Calculates gsm components of a geodipole field with the dipole moment
     corresponding to the epoch, specified by calling subroutine recalc (should be
@@ -260,7 +274,7 @@ def dip(xgsm,ygsm,zgsm):
 
     # common /geopack1/ aaa(10),sps,cps,bbb(23)
     # common /geopack2/ g(105),h(105),rec(105)
-    global aaa, sps,cps, bbb, g, h, rec
+    # global aaa, sps,cps, bbb, g, h, rec
 
     dipmom = np.sqrt(g[1]**2+g[2]**2+h[2]**2)
 
@@ -274,10 +288,11 @@ def dip(xgsm,ygsm,zgsm):
     bygsm = -3.*ygsm*q*(xgsm*sps+zgsm*cps)
     bzgsm = q*((p+t-2.*u)*cps-v*sps)
 
-    return bxgsm,bygsm,bzgsm
+    return bxgsm, bygsm, bzgsm
 
 
-def dip_gsw(xgsw,ygsw,zgsw):
+@njit
+def dip_gsw(xgsw, ygsw, zgsw):
     """
     Calculates gsm components of a geodipole field with the dipole moment
     corresponding to the epoch, specified by calling subroutine recalc (should be
@@ -288,12 +303,12 @@ def dip_gsw(xgsw,ygsw,zgsw):
 
     Author: Sheng Tian
     """
-    xgsm,ygsm,zgsm = gswgsm(xgsw,ygsw,zgsw, 1)
-    bxgsm,bygsm,bzgsm = dip(xgsm,ygsm,zgsm)
-    return gswgsm(bxgsm,bygsm,bzgsm, -1)
+    xgsm, ygsm, zgsm = gswgsm(xgsw, ygsw, zgsw, 1)
+    bxgsm, bygsm, bzgsm = dip(xgsm, ygsm, zgsm)
+    return gswgsm(bxgsm, bygsm, bzgsm, -1)
 
 
-def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
+def recalc(ut, vxgse=-400, vygse=0, vzgse=0):
     """
     1. Prepares elements of rotation matrices for transformations of vectors between
         several coordinate systems, most frequently used in space physics.
@@ -310,7 +325,6 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
     Python version by Sheng Tian
     """
 
-
     # The common block /geopack1/ contains elements of the rotation matrices and other
     # parameters related to the coordinate transformations performed by this package
     # common /geopack1/ st0,ct0,sl0,cl0,ctcl,stcl,ctsl,stsl,sfi,cfi,sps,
@@ -326,17 +340,16 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
     # cgst/sgst - cos/sin of gst.
     # ds3.
     # ba(6).
-    global st0,ct0,sl0,cl0,ctcl,stcl,ctsl,stsl,sfi,cfi,sps,cps, \
-        shi,chi,hi,psi,xmut,ds3,cgst,sgst,ba, \
-        a11,a21,a31,a12,a22,a32,a13,a23,a33, \
-        e11,e21,e31,e12,e22,e32,e13,e23,e33
+    global st0, ct0, sl0, cl0, ctcl, stcl, ctsl, stsl, sfi, cfi, sps, cps, \
+        shi, chi, hi, psi, xmut, ds3, cgst, sgst, ba, \
+        a11, a21, a31, a12, a22, a32, a13, a23, a33, \
+        e11, e21, e31, e12, e22, e32, e13, e23, e33
 
     # The common block /geopack2/ contains coefficients of the IGRF field model, calculated
     # for a given year and day from their standard epoch values. the array rec contains
     # coefficients used in the recursion relations for legendre associate polynomials.
     # common /geopack2/ g(105),h(105),rec(105)
-    global g,h,rec
-
+    global g, h, rec
 
     # Compute the m,n related coefficients (following the notation in Davis 2004):
     # 1. The Schmidt quasi-normalization: S_n,m, which normalizes the associated Legendre polynomials P_n^m
@@ -349,113 +362,126 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
     nmn = np.int32((k+1)*k/2)
 
     # rec[mn].
-    rec = np.empty(nmn,dtype=float)
+    rec = np.empty(nmn, dtype=float)
     mn = 0
-    for n in range(k):                  # K^1,m = 0, Eq (17a), automatically done.
+    # K^1,m = 0, Eq (17a), automatically done.
+    for n in range(k):
         n2 = 2*n+1
         n2 = n2*(n2-2)
         for m in range(n+1):
-            rec[mn] = (n-m)*(n+m)/n2    # K^n,m = (n-m)(n+m)/(2n+1)(2n-1), Eq (17b)
+            # K^n,m = (n-m)(n+m)/(2n+1)(2n-1), Eq (17b)
+            rec[mn] = (n-m)*(n+m)/n2
             mn += 1
 
     # coefficients for a given time, g_n^m(t), h_n^m(t)
-    g,h = load_igrf(ut)
+    g, h = load_igrf(ut)
 
     # now multiply them by schmidt normalization factors:
     s = 1.                      # S_0,0 = 1, Eq (18a)
     mn = 0
-    for n in range(1,k):
+    for n in range(1, k):
         mn += 1                 # skip m=0.
         s *= (2*n-1)/n
         g[mn] *= s              # S_n,0 = S_n-1,0 * (2n-1)/n, Eq (18b)
         h[mn] *= s
         p = s
-        for m in range(1,n+1):
-            if m == 1: aa = 2   # aa = delta_m,1
-            else: aa = 1
+        for m in range(1, n+1):
+            if m == 1:
+                aa = 2   # aa = delta_m,1
+            else:
+                aa = 1
             p *= np.sqrt(aa*(n-m+1)/(n+m))
             mn += 1
-            g[mn] *= p          # S_n,m = S_n,m-1 * sqrt(aa(n-m+1)/(n+m)), Eq (18c)
+            # S_n,m = S_n,m-1 * sqrt(aa(n-m+1)/(n+m)), Eq (18c)
+            g[mn] *= p
             h[mn] *= p          # now g/h are actually g^n,m, Eq (14 a-b)
 
-    g10=-g[1]
-    g11=-g[2]
-    h11=-h[2]
+    g10 = -g[1]
+    g11 = -g[2]
+    h11 = -h[2]
 
     # Now calculate the components of the unit vector ezmag in geo coord.system:
     # sin(teta0)*cos(lambda0), sin(teta0)*sin(lambda0), and cos(teta0)
     #       st0 * cl0                st0 * sl0                ct0
-    sq=g11**2+h11**2
-    sqq=np.sqrt(sq)
-    sqr=np.sqrt(g10**2+sq)
-    sl0= h11/sqq
-    cl0= g11/sqq
-    st0= sqq/sqr
-    ct0= g10/sqr
-    stcl=st0*cl0
-    stsl=st0*sl0
-    ctsl=ct0*sl0
-    ctcl=ct0*cl0
+    sq = g11**2+h11**2
+    sqq = np.sqrt(sq)
+    sqr = np.sqrt(g10**2+sq)
+    sl0 = h11/sqq
+    cl0 = g11/sqq
+    st0 = sqq/sqr
+    ct0 = g10/sqr
+    stcl = st0*cl0
+    stsl = st0*sl0
+    # ctsl = ct0*sl0
+    # ctcl = ct0*cl0
 
-
-    gst,slong,srasn,sdec,obliq = sun(ut)
+    gst, slong, srasn, sdec, obliq = sun(ut)
 
     # All vectors are expressed in GEI.
 
     # xgse_[xyz] (s[123]) are the components of the unit vector exgsm=exgse in GEI,
     # pointing from the earth's center to the sun:
-    xgse_x=np.cos(srasn)*np.cos(sdec)
-    xgse_y=np.sin(srasn)*np.cos(sdec)
-    xgse_z=np.sin(sdec)
+    xgse_x = np.cos(srasn)*np.cos(sdec)
+    xgse_y = np.sin(srasn)*np.cos(sdec)
+    xgse_z = np.sin(sdec)
 
     # zgse_[xyz] (dz[123]) in GEI has the components (0,-sin(delta),cos(delta)) = (0.,-0.397823,0.917462);
     # Here delta = 23.44214 deg for the epoch 1978 (see the book by gurevich or other astronomical handbooks).
     # Here the most accurate time-dependent formula is used:
-    zgse_x=0.
-    zgse_y=-np.sin(obliq)
-    zgse_z= np.cos(obliq)
+    '''
+    zgse_x = 0.
+    zgse_y = -np.sin(obliq)
+    zgse_z = np.cos(obliq)
+    '''
 
     # ygse_[xyz] (dy[123]) = zgse_[xyz] x xgsm_[xyz] in GEI:
-    ygse_x=zgse_y*xgse_z-zgse_z*xgse_y
-    ygse_y=zgse_z*xgse_x-zgse_x*xgse_z
-    ygse_z=zgse_x*xgse_y-zgse_y*xgse_x
+    '''
+    ygse_x = zgse_y*xgse_z-zgse_z*xgse_y
+    ygse_y = zgse_z*xgse_x-zgse_x*xgse_z
+    ygse_z = zgse_x*xgse_y-zgse_y*xgse_x
+    '''
 
     # zsm_[xyz] (dip[123]) are the components of the unit vector zsm=zmag in GEI:
-    cgst=np.cos(gst)
-    sgst=np.sin(gst)
-    zsm_x=stcl*cgst-stsl*sgst
-    zsm_y=stcl*sgst+stsl*cgst
-    zsm_z=ct0
+    cgst = np.cos(gst)
+    sgst = np.sin(gst)
+    zsm_x = stcl*cgst-stsl*sgst
+    zsm_y = stcl*sgst+stsl*cgst
+    zsm_z = ct0
 
     # xgsw_[xyz] (x[123]) in GEI.
+    '''
     v1 = -1/np.sqrt(vxgse*vxgse+vygse*vygse+vzgse*vzgse)
     xgsw_x = (vxgse*xgse_x + vygse*ygse_x + vzgse*zgse_x)*v1
     xgsw_y = (vxgse*xgse_y + vygse*ygse_y + vzgse*zgse_y)*v1
     xgsw_z = (vxgse*xgse_z + vygse*ygse_z + vzgse*zgse_z)*v1
+    '''
 
     # ygsw (y[123]) = zsm x xgsw in GEI.
-    ygsw_x=zsm_y*xgsw_z-zsm_z*xgsw_y
-    ygsw_y=zsm_z*xgsw_x-zsm_x*xgsw_z
-    ygsw_z=zsm_x*xgsw_y-zsm_y*xgsw_x
-    y=np.sqrt(ygsw_x*ygsw_x+ygsw_y*ygsw_y+ygsw_z*ygsw_z)
-    ygsw_x=ygsw_x/y
-    ygsw_y=ygsw_y/y
-    ygsw_z=ygsw_z/y
+    '''
+    ygsw_x = zsm_y*xgsw_z-zsm_z*xgsw_y
+    ygsw_y = zsm_z*xgsw_x-zsm_x*xgsw_z
+    ygsw_z = zsm_x*xgsw_y-zsm_y*xgsw_x
+    y = np.sqrt(ygsw_x*ygsw_x+ygsw_y*ygsw_y+ygsw_z*ygsw_z)
+    ygsw_x = ygsw_x/y
+    ygsw_y = ygsw_y/y
+    ygsw_z = ygsw_z/y
+    '''
 
     # zgsw (z[123]) = xgsw x ygsw in GEI.
+    '''
     zgsw_x = xgsw_y*ygsw_z-xgsw_z*ygsw_y
     zgsw_y = xgsw_z*ygsw_x-xgsw_x*ygsw_z
     zgsw_z = xgsw_x*ygsw_y-xgsw_y*ygsw_x
-
+    '''
 
     # xgsm = xgse in GEI.
-    xgsm_x,xgsm_y,xgsm_z = xgse_x,xgse_y,xgse_z
+    xgsm_x, xgsm_y, xgsm_z = xgse_x, xgse_y, xgse_z
 
     # ygsm = zsm x xgsm in GEI.
     ygsm_x = zsm_y*xgsm_z - zsm_z*xgsm_y
     ygsm_y = zsm_z*xgsm_x - zsm_x*xgsm_z
     ygsm_z = zsm_x*xgsm_y - zsm_y*xgsm_x
-    y=np.sqrt(ygsm_x*ygsm_x+ygsm_y*ygsm_y+ygsm_z*ygsm_z)
+    y = np.sqrt(ygsm_x*ygsm_x+ygsm_y*ygsm_y+ygsm_z*ygsm_z)
     ygsm_x = ygsm_x/y
     ygsm_y = ygsm_y/y
     ygsm_z = ygsm_z/y
@@ -467,14 +493,17 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
 
     # The elements of the matrix gse to gsm are the scalar products:
     # chi=em22=(eygsm,eygse), shi=em23=(eygsm,ezgse), em32=(ezgsm,eygse)=-em23, and em33=(ezgsm,ezgse)=em22
+    '''
     chi = ygsm_x*ygse_x + ygsm_y*ygse_y + ygsm_z*ygse_z
     shi = ygsm_x*zgse_x + ygsm_y*zgse_y + ygsm_z*zgse_z
     hi = np.arcsin(shi)
+    '''
 
     # elements of the matrix gsm to gsw are the scalar products:
     # e11 = (exgsm, exgsw) e12 = (exgsm, eygsw) e13 = (exgsm, ezgsw)
     # e21 = (eygsm, exgsw) e22 = (eygsm, eygsw) e23 = (eygsm, ezgsw)
     # e31 = (ezgsm, exgsw) e32 = (ezgsm, eygsw) e33 = (ezgsm, ezgsw)
+    '''
     e11 = xgsm_x*xgsw_x + xgsm_y*xgsw_y + xgsm_z*xgsw_z
     e12 = xgsm_x*ygsw_x + xgsm_y*ygsw_y + xgsm_z*ygsw_z
     e13 = xgsm_x*zgsw_x + xgsm_y*zgsw_y + xgsm_z*zgsw_z
@@ -484,12 +513,12 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
     e31 = zgsm_x*xgsw_x + zgsm_y*xgsw_y + zgsm_z*xgsw_z
     e32 = zgsm_x*ygsw_x + zgsm_y*ygsw_y + zgsm_z*ygsw_z
     e33 = zgsm_x*zgsw_x + zgsm_y*zgsw_y + zgsm_z*zgsw_z
-
+    '''
 
     # Tilt angle: psi=arcsin(ezsm dot exgsm)
-    sps=zsm_x*xgse_x+zsm_y*xgse_y+zsm_z*xgse_z
-    cps=np.sqrt(1.-sps**2)
-    psi=np.arcsin(sps)
+    sps = zsm_x*xgse_x+zsm_y*xgse_y+zsm_z*xgse_z
+    # cps = np.sqrt(1.-sps**2)
+    psi = np.arcsin(sps)
 
     # The elements of the matrix mag to sm are the scalar products:
     # cfi=gm22=(eysm,eymag), sfi=gm23=(eysm,exmag); They can be derived as follows:
@@ -504,15 +533,17 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
     #                0
     # The components of eysm in gei were found above as ysm_in_geix, ysm_in_geiy, and ysm_in_geiz;
     # Now we only have to combine the quantities into scalar products:
-    xmag_x= ct0*(cl0*cgst-sl0*sgst)
-    xmag_y= ct0*(cl0*sgst+sl0*cgst)
-    xmag_z=-st0
-    ymag_x=-(sl0*cgst+cl0*sgst)
-    ymag_y=-(sl0*sgst-cl0*cgst)
-    cfi=ygsm_x*ymag_x+ygsm_y*ymag_y
-    sfi=ygsm_x*xmag_x+ygsm_y*xmag_y+ygsm_z*xmag_z
+    '''
+    xmag_x = ct0*(cl0*cgst-sl0*sgst)
+    xmag_y = ct0*(cl0*sgst+sl0*cgst)
+    xmag_z = -st0
+    ymag_x = -(sl0*cgst+cl0*sgst)
+    ymag_y = -(sl0*sgst-cl0*cgst)
+    cfi = ygsm_x*ymag_x+ygsm_y*ymag_y
+    sfi = ygsm_x*xmag_x+ygsm_y*xmag_y+ygsm_z*xmag_z
 
-    xmut=(np.arctan2(sfi,cfi)+3.1415926536)*3.8197186342
+    xmut = (np.arctan2(sfi, cfi)+3.1415926536)*3.8197186342
+    '''
 
     # The elements of the matrix geo to gsm are the scalar products:
     # a11=(exgeo,exgsm), a12=(eygeo,exgsm), a13=(ezgeo,exgsm),
@@ -521,17 +552,22 @@ def recalc(ut, vxgse=-400,vygse=0,vzgse=0):
     # All the unit vectors in brackets are already defined in gei:
     # xgeo=(cgst,sgst,0), ygeo=(-sgst,cgst,0), zgeo=(0,0,1)
     # and therefore:
-    a11= xgsm_x*cgst+xgse_y*sgst
-    a12=-xgsm_x*sgst+xgse_y*cgst
-    a13= xgsm_z
-    a21= ygsm_x *cgst+ygsm_y *sgst
-    a22=-ygsm_x *sgst+ygsm_y *cgst
-    a23= ygsm_z
-    a31= zgsm_x*cgst+zgsm_y*sgst
-    a32=-zgsm_x*sgst+zgsm_y*cgst
-    a33= zgsm_z
+    a11 =  xgsm_x * cgst + xgse_y * sgst
+    a12 = -xgsm_x * sgst + xgse_y * cgst
+    a13 =  xgsm_z
+    a21 =  ygsm_x * cgst + ygsm_y * sgst
+    a22 = -ygsm_x * sgst + ygsm_y * cgst
+    a23 =  ygsm_z
+    a31 =  zgsm_x * cgst + zgsm_y * sgst
+    a32 = -zgsm_x * sgst + zgsm_y * cgst
+    a33 =  zgsm_z
 
-    return psi
+    a = np.array([[a11, a12, a13],
+                  [a21, a22, a23],
+                  [a31, a32, a33]])
+
+    return psi, a, g, h, rec
+
 
 def sun(ut):
     """
@@ -601,7 +637,6 @@ def sun(ut):
     srasn = np.arctan2(np.cos(e)*np.sin(l), np.cos(l))
     srasn = np.mod(srasn, twopi)
 
-
     # http://aa.usno.navy.mil/faq/docs/GAST.php
     # gst - gmst, greenwich mean sidereal time.
     # gst = np.mod(279.690983+.9856473354*dj+360.*fday+180.,360.)/rad
@@ -610,10 +645,11 @@ def sun(ut):
     gmst = 4.894961212735792 + 6.30038809898489*d  # in rad
     gmst = np.mod(gmst, twopi)
 
-    return gmst,l,srasn,sdec,e
+    return gmst, l, srasn, sdec, e
 
 
-def gswgsm(p1,p2,p3, j):
+@jit
+def gswgsm(p1, p2, p3, j):
     """
     Converts gsm to gsw coordinates or vice versa.
                        j>0                       j<0
@@ -624,23 +660,24 @@ def gswgsm(p1,p2,p3, j):
     :param j: flag
     :return: output position
     """
-    global e11, e21, e31, e12, e22, e32, e13, e23, e33
+    # global e11, e21, e31, e12, e22, e32, e13, e23, e33
 
     if j > 0:
-        xgsw,ygsw,zgsw = [p1,p2,p3]
+        xgsw, ygsw, zgsw = [p1, p2, p3]
         xgsm = xgsw*e11 + ygsw*e12 + zgsw*e13
         ygsm = xgsw*e21 + ygsw*e22 + zgsw*e23
         zgsm = xgsw*e31 + ygsw*e32 + zgsw*e33
-        return xgsm,ygsm,zgsm
+        return xgsm, ygsm, zgsm
     else:
-        xgsm,ygsm,zgsm = [p1,p2,p3]
+        xgsm, ygsm, zgsm = [p1, p2, p3]
         xgsw = xgsm*e11 + ygsm*e21 + zgsm*e31
         ygsw = xgsm*e12 + ygsm*e22 + zgsm*e32
         zgsw = xgsm*e13 + ygsm*e23 + zgsm*e33
-        return xgsw,ygsw,zgsw
+        return xgsw, ygsw, zgsw
 
 
-def geomag(p1,p2,p3, j):
+@jit
+def geomag(p1, p2, p3, j):
     """
     Converts geographic (geo) to dipole (mag) coordinates or vice versa.
                    j>0                       j<0
@@ -657,22 +694,24 @@ def geomag(p1,p2,p3, j):
     #     /b/  if the values of time have been changed
 
     # common /geopack1/ st0,ct0,sl0,cl0,ctcl,stcl,ctsl,stsl,ab(19),bb(8)
-    global st0,ct0, sl0,sl0, ctcl,stcl, ctsl,stsl
+    global st0, ct0, sl0, sl0, ctcl, stcl, ctsl, stsl
 
     if j > 0:
-        xgeo,ygeo,zgeo = [p1,p2,p3]
+        xgeo, ygeo, zgeo = [p1, p2, p3]
         xmag = xgeo*ctcl+ygeo*ctsl-zgeo*st0
         ymag = ygeo*cl0-xgeo*sl0
         zmag = xgeo*stcl+ygeo*stsl+zgeo*ct0
-        return xmag,ymag,zmag
+        return xmag, ymag, zmag
     else:
-        xmag,ymag,zmag = [p1,p2,p3]
+        xmag, ymag, zmag = [p1, p2, p3]
         xgeo = xmag*ctcl-ymag*sl0+zmag*stcl
         ygeo = xmag*ctsl+ymag*cl0+zmag*stsl
         zgeo = zmag*ct0-xmag*st0
-        return xgeo,ygeo,zgeo
+        return xgeo, ygeo, zgeo
 
-def geigeo(p1,p2,p3, j):
+
+@jit
+def geigeo(p1, p2, p3, j):
     """
     Converts equatorial inertial (gei) to geographical (geo) coords or vice versa.
                    j>0                       j<0
@@ -689,22 +728,24 @@ def geigeo(p1,p2,p3, j):
     #     /b/  if the values of time have been changed
 
     # common /geopack1/ a(27),cgst,sgst,b(6)
-    global cgst,sgst
+    global cgst, sgst
 
     if j > 0:
-        xgei,ygei,zgei = [p1,p2,p3]
+        xgei, ygei, zgei = [p1, p2, p3]
         xgeo = xgei*cgst+ygei*sgst
         ygeo = ygei*cgst-xgei*sgst
         zgeo = zgei
-        return xgeo,ygeo,zgeo
+        return xgeo, ygeo, zgeo
     else:
-        xgeo,ygeo,zgeo = [p1,p2,p3]
+        xgeo, ygeo, zgeo = [p1, p2, p3]
         xgei = xgeo*cgst-ygeo*sgst
         ygei = ygeo*cgst+xgeo*sgst
         zgei = zgeo
-        return xgei,ygei,zgei
+        return xgei, ygei, zgei
 
-def magsm(p1,p2,p3, j):
+
+@jit
+def magsm(p1, p2, p3, j):
     """
     Converts dipole (mag) to solar magnetic (sm) coordinates or vice versa
                    j>0                       j<0
@@ -721,22 +762,24 @@ def magsm(p1,p2,p3, j):
     #     /b/  if the values of time have been changed
 
     # common /geopack1/ a(8),sfi,cfi,b(7),ab(10),ba(8)
-    global sfi,cfi
+    global sfi, cfi
 
     if j > 0:
-        xmag,ymag,zmag = [p1,p2,p3]
+        xmag, ymag, zmag = [p1, p2, p3]
         xsm = xmag*cfi-ymag*sfi
         ysm = xmag*sfi+ymag*cfi
         zsm = zmag
-        return xsm,ysm,zsm
+        return xsm, ysm, zsm
     else:
-        xsm,ysm,zsm = [p1,p2,p3]
+        xsm, ysm, zsm = [p1, p2, p3]
         xmag = xsm*cfi+ysm*sfi
         ymag = ysm*cfi-xsm*sfi
         zmag = zsm
-        return xmag,ymag,zmag
+        return xmag, ymag, zmag
 
-def gsmgse(p1,p2,p3, j):
+
+@jit
+def gsmgse(p1, p2, p3, j):
     """
     converts geocentric solar magnetospheric (gsm) coords to solar ecliptic (gse) ones or vice versa.
                    j>0                       j<0
@@ -749,22 +792,24 @@ def gsmgse(p1,p2,p3, j):
     """
 
     # common /geopack1/ a(12),shi,chi,ab(13),ba(8)
-    global shi,chi
+    global shi, chi
 
     if j > 0:
-        xgsm,ygsm,zgsm = [p1,p2,p3]
+        xgsm, ygsm, zgsm = [p1, p2, p3]
         xgse = xgsm
         ygse = ygsm*chi-zgsm*shi
         zgse = ygsm*shi+zgsm*chi
-        return xgse,ygse,zgse
+        return xgse, ygse, zgse
     else:
-        xgse,ygse,zgse = [p1,p2,p3]
+        xgse, ygse, zgse = [p1, p2, p3]
         xgsm = xgse
         ygsm = ygse*chi+zgse*shi
         zgsm = zgse*chi-ygse*shi
-        return xgsm,ygsm,zgsm
+        return xgsm, ygsm, zgsm
 
-def smgsm(p1,p2,p3, j):
+
+@jit
+def smgsm(p1, p2, p3, j):
     """
     Converts solar magnetic (sm) to geocentric solar magnetospheric (gsm) coordinates or vice versa.
                    j>0                       j<0
@@ -781,22 +826,25 @@ def smgsm(p1,p2,p3, j):
     #     /b/  if the values of time have been changed
 
     # common /geopack1/ a(10),sps,cps,b(15),ab(8)
-    global sps,cps
+    global sps, cps
 
     if j > 0:
-        xsm,ysm,zsm = [p1,p2,p3]
+        xsm, ysm, zsm = [p1, p2, p3]
         xgsm = xsm*cps+zsm*sps
         ygsm = ysm
         zgsm = zsm*cps-xsm*sps
-        return xgsm,ygsm,zgsm
+        return xgsm, ygsm, zgsm
     else:
-        xgsm,ygsm,zgsm = [p1,p2,p3]
+        xgsm, ygsm, zgsm = [p1, p2, p3]
         xsm = xgsm*cps-zgsm*sps
         ysm = ygsm
         zsm = xgsm*sps+zgsm*cps
-        return xsm,ysm,zsm
+        return xsm, ysm, zsm
 
-def geogsm(p1,p2,p3, j):
+# DOES NOT WORK
+# Needs a11,a21,a31,a12,a22,a32,a13,a23,a33
+@njit
+def geogsm(p1, p2, p3, j, a):
     """
     Converts geographic (geo) to geocentric solar magnetospheric (gsm) coordinates or vice versa.
                    j>0                       j<0
@@ -813,23 +861,35 @@ def geogsm(p1,p2,p3, j):
     #     /b/  if the values of time have been changed
 
     # common /geopack1/aa(17),a11,a21,a31,a12,a22,a32,a13,a23,a33,d,b(8)
-    global a11,a21,a31,a12,a22,a32,a13,a23,a33
+    #global a11,a21,a31,a12,a22,a32,a13,a23,a33
+
+    a11 = a[0, 0]
+    a12 = a[0, 1]
+    a13 = a[0, 2]
+    a21 = a[1, 0]
+    a22 = a[1, 1]
+    a23 = a[1, 2]
+    a31 = a[2, 0]
+    a32 = a[2, 1]
+    a33 = a[2, 2]
 
     if j > 0:
-        xgeo,ygeo,zgeo = [p1,p2,p3]
+        xgeo, ygeo, zgeo = [p1, p2, p3]
         xgsm = a11*xgeo+a12*ygeo+a13*zgeo
         ygsm = a21*xgeo+a22*ygeo+a23*zgeo
         zgsm = a31*xgeo+a32*ygeo+a33*zgeo
-        return xgsm,ygsm,zgsm
+        return xgsm, ygsm, zgsm
     else:
-        xgsm,ygsm,zgsm = [p1,p2,p3]
+        xgsm, ygsm, zgsm = [p1, p2, p3]
         xgeo = a11*xgsm+a21*ygsm+a31*zgsm
         ygeo = a12*xgsm+a22*ygsm+a32*zgsm
         zgeo = a13*xgsm+a23*ygsm+a33*zgsm
-        return xgeo,ygeo,zgeo
+        return xgeo, ygeo, zgeo
 
 
-def geodgeo(p1,p2, j):
+# WORKS
+@jit
+def geodgeo(p1, p2, j):
     """
     This subroutine (1) converts vertical local height (altitude) h and geodetic
     latitude xmu into geocentric coordinates r and theta (geocentric radial
@@ -861,8 +921,8 @@ def geodgeo(p1,p2, j):
     # and beta is its second eccentricity squared
     r_eq, beta = 6378.137, 6.73949674228e-3
 
-    if j>0:     # Direct transformation(GEOD->GEO):
-        h,xmu = [p1,p2]
+    if j > 0:     # Direct transformation(GEOD->GEO):
+        h, xmu = [p1, p2]
         cosxmu = np.cos(xmu)
         sinxmu = np.sin(xmu)
         den = np.sqrt(cosxmu**2+(sinxmu/(1+beta))**2)
@@ -873,13 +933,14 @@ def geodgeo(p1,p2, j):
         z = rs*sinlam+h*sinxmu
         r = np.sqrt(x**2+z**2)
         theta = np.arccos(z/r)
-        return r,theta
+        return r, theta
     else:       # Inverse transformation(GEO->GEOD):
-        r,theta = [p1,p2]
+        r, theta = [p1, p2]
         phi = np.pi*0.5-theta
-        phi1,dphi,h,xmu,tol = phi,0,0,0,1e-6
+        phi1, dphi, h, xmu, tol = phi, 0, 0, 0, 1e-6
         for n in range(100):
-            if np.abs(dphi) > tol: break
+            if np.abs(dphi) > tol:
+                break
             sp = np.sin(phi1)
             arg = sp*(1+beta)/np.sqrt(1+beta*(2+beta)*sp**2)
             xmu = np.arcsin(arg)
@@ -891,10 +952,12 @@ def geodgeo(p1,p2, j):
             rr = np.sqrt(x**2+z**2)
             dphi = np.arcsin(z/rr)-phi
             phi1 -= dphi
-        return h,xmu
+        return h, xmu
 
 
-def sphcar(p1,p2,p3, j):
+# WORKS
+@njit
+def sphcar(p1, p2, p3, j):
     """
     Converts spherical coords into cartesian ones and vice versa (theta and phi in radians).
                   j>0            j<0
@@ -912,28 +975,33 @@ def sphcar(p1,p2,p3, j):
     """
 
     if j > 0:
-        r,theta,phi = [p1,p2,p3]
-        sq=r*np.sin(theta)
-        x=sq*np.cos(phi)
-        y=sq*np.sin(phi)
-        z= r*np.cos(theta)
-        return x,y,z
+        r, theta, phi = [p1, p2, p3]
+        sq = r * np.sin(theta)
+        x = sq * np.cos(phi)
+        y = sq * np.sin(phi)
+        z = r * np.cos(theta)
+        return x, y, z
     else:
-        x,y,z = [p1,p2,p3]
-        sq=x**2+y**2
-        r=np.sqrt(sq+z**2)
+        x, y, z = [p1, p2, p3]
+        sq = x**2+y**2
+        r = np.sqrt(sq+z**2)
         if sq != 0:
-            sq=np.sqrt(sq)
-            phi=np.arctan2(y,x)
-            theta=np.arctan2(sq,z)
-            if phi < 0: phi += 2*np.pi
+            sq = np.sqrt(sq)
+            phi = np.arctan2(y, x)
+            theta = np.arctan2(sq, z)
+            if phi < 0:
+                phi += 2*np.pi
         else:
-            phi=0.
-            if z < 0: theta = np.pi
-            else: theta = 0
-        return r,theta,phi
+            phi = 0.
+            if z < 0:
+                theta = np.pi
+            else:
+                theta = 0
+        return r, theta, phi
 
-def bspcar(theta,phi,br,btheta,bphi):
+# WORKS
+@njit
+def bspcar(theta, phi, br, btheta, bphi):
     """
     Calculates cartesian field components from spherical ones.
 
@@ -945,19 +1013,22 @@ def bspcar(theta,phi,br,btheta,bphi):
     # Author:  N.A. Tsyganenko
     """
 
-    s= np.sin(theta)
-    c= np.cos(theta)
-    sf=np.sin(phi)
-    cf=np.cos(phi)
-    be=br*s+btheta*c
+    s = np.sin(theta)
+    c = np.cos(theta)
+    sf = np.sin(phi)
+    cf = np.cos(phi)
+    be = br * s + btheta * c
 
-    bx=be*cf-bphi*sf
-    by=be*sf+bphi*cf
-    bz=br*c-btheta*s
+    bx = be * cf - bphi * sf
+    by = be * sf + bphi * cf
+    bz = br * c - btheta * s
 
-    return bx,by,bz
+    return bx, by, bz
 
-def bcarsp(x,y,z,bx,by,bz):
+
+# WORKS
+@njit
+def bcarsp(x, y, z, bx, by, bz):
     """
     Calculates spherical field components from those in cartesian system
 
@@ -969,28 +1040,30 @@ def bcarsp(x,y,z,bx,by,bz):
     Author:  N.A. Tsyganenko
     """
 
-    rho2=x**2+y**2
-    r=np.sqrt(rho2+z**2)
-    rho=np.sqrt(rho2)
+    rho2 = x**2+y**2
+    r = np.sqrt(rho2+z**2)
+    rho = np.sqrt(rho2)
 
     if rho != 0:
-        cphi=x/rho
-        sphi=y/rho
+        cphi = x/rho
+        sphi = y/rho
     else:
-        cphi=1.
-        sphi=0.
+        cphi = 1.
+        sphi = 0.
 
-    ct=z/r
-    st=rho/r
+    ct = z/r
+    st = rho/r
 
-    br=(x*bx+y*by+z*bz)/r
-    btheta=(bx*cphi+by*sphi)*ct-bz*st
-    bphi=by*cphi-bx*sphi
+    br = (x*bx+y*by+z*bz)/r
+    btheta = (bx*cphi+by*sphi)*ct-bz*st
+    bphi = by*cphi-bx*sphi
 
-    return br,btheta,bphi
+    return br, btheta, bphi
 
 
-def call_external_model(exname, par, ps, x,y,z):
+# DOES NOT WORK
+@jit
+def call_external_model(exname, par, ps, x, y, z):
     if exname == 't89':
         return t89.t89(par, ps, x, y, z)
     elif exname == 't96':
@@ -1002,15 +1075,23 @@ def call_external_model(exname, par, ps, x,y,z):
     else:
         raise ValueError
 
-def call_internal_model(inname, x,y,z):
+# DOES NOT WORK
+
+
+@jit
+def call_internal_model(inname, x, y, z):
     if inname == 'dipole':
-        return dip(x,y,z)
+        return dip(x, y, z)
     elif inname == 'igrf':
-        return igrf_gsm(x,y,z)
+        return igrf_gsm(x, y, z)
     else:
         raise ValueError
 
-def rhand(x,y,z,parmod,exname,inname):
+# GLOBAL: Takes in psi
+
+
+@njit
+def rhand(x, y, z, parmod, exname, inname, ds3):
     """
     Calculates the components of the right hand side vector in the geomagnetic field
     line equation  (a subsidiary subroutine for the subroutine step)
@@ -1025,23 +1106,28 @@ def rhand(x,y,z,parmod,exname,inname):
     :return: r1,r2,r3.
     """
     #  common /geopack1/ a(15),psi,aa(10),ds3,bb(8)
-    global a, psi, aa, ds3, bb
+    # global a, psi, aa, bb
+    # global psi
+    # call_external_model(exname, parmod, psi, x,y,z)
+    bxgsm, bygsm, bzgsm = geopack_numba.t89.t89(parmod, psi, x, y, z)
+    # call_internal_model(inname, x,y,z)
+    hxgsm, hygsm, hzgsm = igrf_gsm(x, y, z)
 
-    bxgsm,bygsm,bzgsm = call_external_model(exname, parmod, psi, x,y,z)
-    hxgsm,hygsm,hzgsm = call_internal_model(inname, x,y,z)
+    bx = bxgsm+hxgsm
+    by = bygsm+hygsm
+    bz = bzgsm+hzgsm
+    b = ds3/np.sqrt(bx**2+by**2+bz**2)
 
-    bx=bxgsm+hxgsm
-    by=bygsm+hygsm
-    bz=bzgsm+hzgsm
-    b=ds3/np.sqrt(bx**2+by**2+bz**2)
+    r1 = bx*b
+    r2 = by*b
+    r3 = bz*b
 
-    r1=bx*b
-    r2=by*b
-    r3=bz*b
+    return r1, r2, r3
 
-    return r1,r2,r3
 
-def step(x,y,z, ds,errin,parmod,exname,inname):
+# DOES NOT WORK
+@njit
+def step(x, y, z, ds, errin, parmod, exname, inname, ds3):
     """
     Re-calculates {x,y,z}, making a step along a field line.
     model version, the array parmod contains input parameters for that model
@@ -1059,22 +1145,29 @@ def step(x,y,z, ds,errin,parmod,exname,inname):
     """
 
     # common /geopack1/ a(26),ds3,b(8)
-    global a, ds3, b
+    # global ds3
+    # global a, b
 
-    if errin <=0: raise ValueError
+    if errin <= 0:
+        raise ValueError
     errcur = errin
     i = 0
     maxloop = 100
 
     while (errcur >= errin) & (i < maxloop):
-        ds3=-ds/3.
-        r11,r12,r13 = rhand(x,y,z,parmod,exname,inname)
-        r21,r22,r23 = rhand(x+r11,y+r12,z+r13,parmod,exname,inname)
-        r31,r32,r33 = rhand(x+.5*(r11+r21),y+.5*(r12+r22),z+.5*(r13+r23),parmod,exname,inname)
-        r41,r42,r43 = rhand(x+.375*(r11+3.*r31),y+.375*(r12+3.*r32),z+.375*(r13+3.*r33),parmod,exname,inname)
-        r51,r52,r53 = rhand(x+1.5*(r11-3.*r31+4.*r41),y+1.5*(r12-3.*r32+4.*r42),z+1.5*(r13-3.*r33+4.*r43),parmod,exname,inname)
-        errcur=np.abs(r11-4.5*r31+4.*r41-.5*r51)+np.abs(r12-4.5*r32+4.*r42-.5*r52)+np.abs(r13-4.5*r33+4.*r43-.5*r53)
-        if errcur < errin: break
+        ds3 = -ds/3.
+        r11, r12, r13 = rhand(x, y, z, parmod, exname, inname, ds3)
+        r21, r22, r23 = rhand(x+r11, y+r12, z+r13, parmod, exname, inname, ds3)
+        r31, r32, r33 = rhand(x+.5*(r11+r21), y+.5*(r12+r22),
+                              z+.5*(r13+r23), parmod, exname, inname, ds3)
+        r41, r42, r43 = rhand(x+.375*(r11+3.*r31), y+.375*(r12+3.*r32),
+                              z+.375*(r13+3.*r33), parmod, exname, inname, ds3)
+        r51, r52, r53 = rhand(x+1.5*(r11-3.*r31+4.*r41), y+1.5*(r12-3.*r32+4.*r42),
+                              z+1.5*(r13-3.*r33+4.*r43), parmod, exname, inname, ds3)
+        errcur = np.abs(r11-4.5*r31+4.*r41-.5*r51)+np.abs(r12 -
+                                                          4.5*r32+4.*r42-.5*r52)+np.abs(r13-4.5*r33+4.*r43-.5*r53)
+        if errcur < errin:
+            break
 
         ds *= 0.5
         i += 1
@@ -1088,9 +1181,12 @@ def step(x,y,z, ds,errin,parmod,exname,inname):
     if (errcur < (errin*0.04)) & (np.abs(ds) < 1.33):
         ds *= 1.5
 
-    return x,y,z
+    return x, y, z
 
-def trace(xi,yi,zi,dir,rlim=10,r0=1,parmod=2,exname='t89',inname='igrf',maxloop=1000):
+
+# DOES NOT WORK
+@njit
+def trace(xi, yi, zi, dir, rlim=10, r0=1, parmod=2, exname='t89', inname='igrf', maxloop=1000):
     """
     Traces a field line from an arbitrary point of space to the earth's surface or
     to a model limiting boundary.
@@ -1130,46 +1226,48 @@ def trace(xi,yi,zi,dir,rlim=10,r0=1,parmod=2,exname='t89',inname='igrf',maxloop=
     """
 
     # common /geopack1/ aa(26),dd,bb(8)
-    global aa, dd, bb, ds3
 
-    err, l, ds, x,y,z, dd, al = 0.001, 0, 0.5*dir, xi,yi,zi, dir, 0.
-    xx = np.array([x])
-    yy = np.array([y])
-    zz = np.array([z])
+    err, l, ds, x, y, z, dd, al = 0.001, 0, 0.5*dir, xi, yi, zi, dir, 0.
+    xx = np.zeros(maxloop)
+    yy = np.zeros(maxloop)
+    zz = np.zeros(maxloop)
 
     # Here we call RHAND just to find out the sign of the radial component of the field
     # vector, and to determine the initial direction of the tracing (i.e., either away
     # or towards Earth):
     ds3 = -ds/3.
-    r1,r2,r3 = rhand(x,y,z,parmod,exname,inname)
+    r1, r2, r3 = rhand(x, y, z, parmod, exname, inname, ds3)
 
     # |ad|=0.01 and its sign follows the rule:
     # (1) if dir=1 (tracing antiparallel to B vector) then the sign of ad is the same as of Br
     # (2) if dir=-1 (tracing parallel to B vector) then the sign of ad is opposite to that of Br
     #     ad is defined in order to initialize the value of rr (radial distance at previous step):
-    ad=0.01
-    if (x*r1+y*r2+z*r3) < 0: ad=-0.01
+    ad = 0.01
+    if (x*r1+y*r2+z*r3) < 0:
+        ad = -0.01
 
-    rr=np.sqrt(x**2+y**2+z**2)+ad
+    rr = np.sqrt(x**2 + y**2 + z**2) + ad
 
     while l < maxloop:
-        ryz=y**2+z**2
-        r2=x**2+ryz
-        r=np.sqrt(r2)
-        xr,yr,zr = [x,y,z]
+        ryz = y**2+z**2
+        r2 = x**2+ryz
+        r = np.sqrt(r2)
+        xr, yr, zr = [x, y, z]
 
         # check if the line hit the outer tracing boundary; if yes, then terminate the tracing
-        if (r >= rlim) | (ryz >= 1600) | (x>=20): break
+        if (r >= rlim) | (ryz >= 1600) | (x >= 20):
+            break
 
         # check whether or not the inner tracing boundary was crossed from outside,
         # if yes, then calculate the footpoint position by interpolation
-        if (r < r0) & (rr > r): # this is crossing the inner boundary from inside!!!??? looks like it will trace into the boundary and then bounce back out.
+        # this is crossing the inner boundary from inside!!!??? looks like it will trace into the boundary and then bounce back out.
+        if (r < r0) & (rr > r):
             # find the footpoint position by interpolating between the current and previous field line points:
-            r1=(r0-r)/(rr-r)
-            x=x-(x-xr)*r1
-            y=y-(y-yr)*r1
-            z=z-(z-zr)*r1
-            xr,yr,zr = [x,y,z]
+            r1 = (r0-r)/(rr-r)
+            x = x-(x-xr)*r1
+            y = y-(y-yr)*r1
+            z = z-(z-zr)*r1
+            xr, yr, zr = [x, y, z]
             break
 
         # check if (i) we are moving outward, or (ii) we are still sufficiently
@@ -1187,19 +1285,23 @@ def trace(xi,yi,zi,dir,rlim=10,r0=1,parmod=2,exname='t89',inname='igrf',maxloop=
                 ds = dir
             else:
                 fc = 0.2
-                if (r-r0) < 0.05: fc = 0.05
+                if (r-r0) < 0.05:
+                    fc = 0.05
                 al = fc*(r-r0+0.2)
                 ds = dir*al
-        rr=r
-        x,y,z = step(x,y,z,ds,err,parmod,exname,inname)
-        xx = np.append(xx,x)
-        yy = np.append(yy,y)
-        zz = np.append(zz,z)
+        rr = r
+        x, y, z = step(x, y, z, ds, err, parmod, exname, inname, ds3)
+        xx[l] = x
+        yy[l] = y
+        zz[l] = z
         l += 1
 
-    return x,y,z, xx,yy,zz
+    return x, y, z, xx, yy, zz
 
-def shuetal_mgnp(xn_pd,vel,bzimf,xgsm,ygsm,zgsm):
+
+# WORKS
+@njit
+def shuetal_mgnp(xn_pd, vel, bzimf, xgsm, ygsm, zgsm):
     """
     For any point of space with coordinates (xgsm,ygsm,zgsm) and specified conditions
     in the incoming solar wind, this subroutine:
@@ -1225,14 +1327,18 @@ def shuetal_mgnp(xn_pd,vel,bzimf,xgsm,ygsm,zgsm):
     """
 
     # pd is the solar wind dynamic pressure (in npa)
-    if vel < 0: pd = xn_pd
-    else: pd = 1.94e-6*xn_pd*vel**2
+    if vel < 0:
+        pd = xn_pd
+    else:
+        pd = 1.94e-6*xn_pd*vel**2
 
     # Define the angle phi, measured duskward from the noon-midnight meridian plane;
     # if the observation point lies on the x axis, the angle phi cannot be uniquely
     # defined, and we set it at zero:
-    if (ygsm != 0) | (zgsm != 0): phi = np.arctan2(ygsm,zgsm)
-    else: phi = 0
+    if (ygsm != 0) | (zgsm != 0):
+        phi = np.arctan2(ygsm, zgsm)
+    else:
+        phi = 0
 
     # First, find out if the observation point lies inside the Shue et al bdry
     # and set the value of the id flag:
@@ -1241,12 +1347,13 @@ def shuetal_mgnp(xn_pd,vel,bzimf,xgsm,ygsm,zgsm):
     alpha = (0.58-0.007*bzimf)*(1.+0.024*np.log(pd))
     r = np.sqrt(xgsm**2+ygsm**2+zgsm**2)
     rm = r0*(2./(1.+xgsm/r))**alpha
-    if r < rm: id = 1
+    if r < rm:
+        id = 1
 
     #  Now, find the corresponding t96 magnetopause position, to be used as
     #  a starting approximation in the search of a corresponding Shue et al.
     #  boundary point:
-    xmt96,ymt96,zmt96,dist,id96 = t96_mgnp(pd,-1.,xgsm,ygsm,zgsm)
+    xmt96, ymt96, zmt96, dist, id96 = t96_mgnp(pd, -1., xgsm, ygsm, zgsm)
 
     rho2 = ymt96**2+zmt96**2
     r = np.sqrt(rho2+xmt96**2)
@@ -1258,7 +1365,7 @@ def shuetal_mgnp(xn_pd,vel,bzimf,xgsm,ygsm,zgsm):
     while nit < 1000:
         nit += 1
 
-        t = np.arctan2(st,ct)
+        t = np.arctan2(st, ct)
         rm = r0*(2./(1.+ct))**alpha
 
         f = r-rm
@@ -1267,7 +1374,7 @@ def shuetal_mgnp(xn_pd,vel,bzimf,xgsm,ygsm,zgsm):
         gradf = np.sqrt(gradf_r**2+gradf_t**2)
 
         dr = -f/gradf**2
-        dt =  dr/r*gradf_t
+        dt = dr/r*gradf_t
 
         r = r+dr
         t = t+dt
@@ -1275,20 +1382,24 @@ def shuetal_mgnp(xn_pd,vel,bzimf,xgsm,ygsm,zgsm):
         ct = np.cos(t)
 
         ds = np.sqrt(dr**2+(r*dt)**2)
-        if ds <= 1.e-4: break
-    else: print(' boundary point could not be found; iterations do not converge')
-
+        if ds <= 1.e-4:
+            break
+    else:
+        print(' boundary point could not be found; iterations do not converge')
 
     xmgnp = r*np.cos(t)
-    rho =   r*np.sin(t)
+    rho = r*np.sin(t)
     ymgnp = rho*np.sin(phi)
     zmgnp = rho*np.cos(phi)
 
     dist = np.sqrt((xgsm-xmgnp)**2+(ygsm-ymgnp)**2+(zgsm-zmgnp)**2)
 
-    return xmgnp,ymgnp,zmgnp, dist, id
+    return xmgnp, ymgnp, zmgnp, dist, id
 
-def t96_mgnp(xn_pd,vel,xgsm,ygsm,zgsm):
+
+# WORKS
+@njit
+def t96_mgnp(xn_pd, vel, xgsm, ygsm, zgsm):
     """
     For any point of space with given coordinates (xgsm,ygsm,zgsm), this subroutine defines
     the position of a point (xmgnp,ymgnp,zmgnp) at the T96 model magnetopause, having the
@@ -1314,8 +1425,10 @@ def t96_mgnp(xn_pd,vel,xgsm,ygsm,zgsm):
     """
     # Define solar wind dynamic pressure (nanopascals, assuming 4% of alpha-particles),
     # if not explicitly specified in the input:
-    if vel < 0: pd = xn_pd
-    else: pd = 1.94e-6*xn_pd*vel**2
+    if vel < 0:
+        pd = xn_pd
+    else:
+        pd = 1.94e-6*xn_pd*vel**2
 
     # ratio of pd to the average pressure, assumed equal to 2 npa:
     # The power index 0.14 in the scaling factor is the best-fit value
@@ -1324,20 +1437,21 @@ def t96_mgnp(xn_pd,vel,xgsm,ygsm,zgsm):
     rat = pd/2.0
     rat16 = rat**0.14
 
-    a0, s00, x00 = [70.,1.08,5.48]
+    a0, s00, x00 = [70., 1.08, 5.48]
 
     # Values of the magnetopause parameters, scaled by the actual pressure:
     # xm is the x-coordinate of the "seam" between the ellipsoid and the cylinder
     # For details on the ellipsoidal coordinates, see the paper:
     # N.A. Tsyganenko, Solution of chapman-ferraro problem for an ellipsoidal magnetopause, planet.space sci., v.37, p.1037, 1989).
-    a  = a0/rat16
+    a = a0/rat16
     s0 = s00
     x0 = x00/rat16
     xm = x0-a
 
-
-    if (ygsm != 0) | (zgsm != 0): phi = np.arctan2(ygsm,zgsm)
-    else: phi = 0
+    if (ygsm != 0) | (zgsm != 0):
+        phi = np.arctan2(ygsm, zgsm)
+    else:
+        phi = 0
 
     rho = np.sqrt(ygsm**2+zgsm**2)
     if xgsm < xm:
@@ -1346,21 +1460,24 @@ def t96_mgnp(xn_pd,vel,xgsm,ygsm,zgsm):
         ymgnp = rhomgnp*np.sin(phi)
         zmgnp = rhomgnp*np.cos(phi)
         dist = np.sqrt((xgsm-xmgnp)**2+(ygsm-ymgnp)**2+(zgsm-zmgnp)**2)
-        if rhomgnp >  rho: id =  1
-        else: id = -1
-        return xmgnp,ymgnp,zmgnp, dist, id
+        if rhomgnp > rho:
+            id = 1
+        else:
+            id = -1
+        return xmgnp, ymgnp, zmgnp, dist, id
 
     xksi = (xgsm-x0)/a+1.
     xdzt = rho/a
     sq1 = np.sqrt((1.+xksi)**2+xdzt**2)
     sq2 = np.sqrt((1.-xksi)**2+xdzt**2)
     sigma = 0.5*(sq1+sq2)
-    tau   = 0.5*(sq1-sq2)
+    tau = 0.5*(sq1-sq2)
 
     # Now calculate (x,y,z) for the closest point at the magnetopause
     xmgnp = x0-a*(1.-s0*tau)
     arg = (s0**2-1.)*(1.-tau**2)
-    if arg < 0: arg = 0
+    if arg < 0:
+        arg = 0
     rhomgnp = a*np.sqrt(arg)
     ymgnp = rhomgnp*np.sin(phi)
     zmgnp = rhomgnp*np.cos(phi)
@@ -1369,10 +1486,12 @@ def t96_mgnp(xn_pd,vel,xgsm,ygsm,zgsm):
     # (in general, this is not the shortest distance d_min, but dist asymptotically tends
     # to d_min, as we are getting closer to the magnetopause):
     dist = np.sqrt((xgsm-xmgnp)**2+(ygsm-ymgnp)**2+(zgsm-zmgnp)**2)
-    if sigma > s0: id = -1  # id = -1 means that the point lies outside
-    else: id = 1            # id =  1 means that the point lies inside
+    if sigma > s0:
+        id = -1  # id = -1 means that the point lies outside
+    else:
+        id = 1            # id =  1 means that the point lies inside
 
-    return xmgnp,ymgnp,zmgnp, dist, id
+    return xmgnp, ymgnp, zmgnp, dist, id
 
 
-init_igrf()
+# init_igrf()
