@@ -1,4 +1,5 @@
 import numpy as np
+from math import sqrt
 from numba import njit
 
 # t04 is identical to t01 except for several factors.
@@ -20,7 +21,7 @@ def t04(parmod,ps,x,y,z):
     :return: bx,by,bz. Field components in GSM system, in nT.
         Computed as a sum of contributions from principal field sources.
 
-    Assembled: March 25, 2004; Updated: August 2 & 31, December 27, 2004.
+    Assembled: March 25, 2004; Updated: August 2 and 31, December 27, 2004.
     A bug eliminated March 14, 2005 (might cause compilation problems with some fortran compilers)
 
     Attention: The model is based on data taken sunward from x=-15Re, and hence becomes invalid at larger tailward distances !!!                                  *
@@ -51,7 +52,7 @@ def t04(parmod,ps,x,y,z):
     iopgen,ioptt,iopb,iopr = [0.]*4
 
     pdyn=parmod[0]
-    dst_ast=parmod[1]*0.8-13*np.sqrt(pdyn)
+    dst_ast=parmod[1]*0.8-13.*np.sqrt(pdyn)
     bximf,byimf,bzimf=[0.,parmod[2],parmod[3]]
     w1,w2,w3,w4,w5,w6 = parmod[4:10]
     pss,xx,yy,zz = [ps,x,y,z]
@@ -135,10 +136,10 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
 
         rh=rh0+rh2*(zss/r)**2
         sinpsas=sps/(1+(r/rh)**3)**0.33333333
-        cospsas=np.sqrt(1-sinpsas**2)
+        cospsas=sqrt(1-sinpsas**2)
         zss=x*sinpsas+z*cospsas
         xss=x*cospsas-z*sinpsas
-        dd=np.abs(xss-xsold)+np.abs(zss-zsold)
+        dd = abs(xss-xsold)+abs(zss-zsold)
 
     rho2=y**2+zss**2
     asq=am**2
@@ -146,7 +147,7 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
     if xmxm < 0: xmxm = 0   # the boundary is a cylinder tailward of x=x0-am
     axx0=xmxm**2
     aro=asq+rho2
-    sigma=np.sqrt((aro+axx0+np.sqrt((aro+axx0)**2-4.*asq*axx0))/(2.*asq))
+    sigma = sqrt((aro + axx0 + sqrt((aro + axx0)**2 - 4. * asq * axx0)) / (2. * asq))
 
     # Now, there are three possible cases:
     #    (1) inside the magnetosphere
@@ -164,10 +165,13 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
             bzcf=cfz*xappa3
 
         bxt1,byt1,bzt1,bxt2,byt2,bzt2 = [0.]*6
-        if (iopgen == 0) | (iopgen == 2):
+        if (iopgen == 0) or (iopgen == 2):
+            # ISSUE LIES HERE WITH ZNAM
             dstt = -20.
-            if dst < dstt: dstt = dst
-            znam = np.abs(dstt)**0.37
+            if dst < dstt: 
+                dstt = dst
+            # THIS IS MODIFIED FROM THE ORIGINAL PORT !!!!!!! (WE CLAMP TO INT)
+            znam = abs(dstt)**0.37
             dxshift1=a[23]-a[24]/znam
             dxshift2=a[25]-a[26]/znam
             d=a[35]*np.exp(-w1/a[36])+a[68]
@@ -175,7 +179,7 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
             bxt1,byt1,bzt1,bxt2,byt2,bzt2 = deformed(iopt,ps,xx,yy,zz, rh0, dxshift1, dxshift2, d, deltady, g)
 
         bxr11,byr11,bzr11, bxr12,byr12,bzr12, bxr21,byr21,bzr21, bxr22,byr22,bzr22 = [0.]*12
-        if (iopgen == 0) | (iopgen == 3):
+        if (iopgen == 0) or (iopgen == 3):
             znam = np.abs(dst)
             if dst >= -20: znam = 20.
             xkappa1=a[31]*(znam/20)**a[32]
@@ -185,7 +189,7 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
                 birk_tot(iopb,ps,xx,yy,zz, xkappa1, xkappa2)
 
         bxsrc,bysrc,bzsrc, bxprc,byprc,bzprc = [0.]*6
-        if (iopgen == 0) | (iopgen == 4):
+        if (iopgen == 0) or (iopgen == 4):
             phi=a[37]
             znam=np.abs(dst)
             if dst >= -20: znam = 20
@@ -195,7 +199,7 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
             bxsrc,bysrc,bzsrc, bxprc,byprc,bzprc = full_rc(iopr,ps,xx,yy,zz, sc_sy, sc_pr, phi)
 
         hximf,hyimf,hzimf = [0.]*3
-        if (iopgen == 0) | (iopgen == 5):
+        if (iopgen == 0) or (iopgen == 5):
             # These are components of the penetrated field per unit of the penetration coefficient.
             # In other words, these are derivatives of the penetration field components with respect
             # to the penetration coefficient. We assume that only the transverse component of the
@@ -206,8 +210,11 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
         dlp1=(pdyn/2)**a[20]
         dlp2=(pdyn/2)**a[21]
 
+
         tamp1=a[1]+a[2]*dlp1+a[3]*a[38]*w1/np.sqrt(w1**2+a[38]**2)+a[4]*dst
         tamp2=a[5]+a[6]*dlp2+a[7]*a[39]*w2/np.sqrt(w2**2+a[39]**2)+a[8]*dst
+
+
         a_src=a[9] +a[10]*a[40]*w3/np.sqrt(w3**2+a[40]**2)+a[11]*dst
         a_prc=a[12]+a[13]*a[41]*w4/np.sqrt(w4**2+a[41]**2)+a[14]*dst
         a_r11=a[15]+a[16]*a[42]*w5/np.sqrt(w5**2+a[42]**2)
@@ -217,13 +224,15 @@ def extern(iopgen,iopt,iopb,iopr,a,ntot,pdyn,dst,bximf,byimf,bzimf,w1,w2,w3,w4,w
         bby=a[0]*bycf + tamp1*byt1+tamp2*byt2 + a_src*bysrc+a_prc*byprc + a_r11*byr11+a_r21*byr21 + a[19]*hyimf
         bbz=a[0]*bzcf + tamp1*bzt1+tamp2*bzt2 + a_src*bzsrc+a_prc*bzprc + a_r11*bzr11+a_r21*bzr21 + a[19]*hzimf
 
+
         # And we have the total external field.
         #  Now, let us check whether we have the case (1). if yes - we are done:
         if sigma < (s0-dsig):   # (x,y,z) is inside the magnetosphere
             bx,by,bz = [bbx,bby,bbz]
         else:                   # this is the most complex case: we are inside the interpolation region
-            fint=0.5*(1.-(sigma-s0)/dsig)
-            fext=0.5*(1.+(sigma-s0)/dsig)
+            # THIS IS WHERE ITS WRONG. EITHER SIGMA, S0, OR DSIG IS INCORRECT
+            fint = 0.5 * (1. - (sigma - s0) / dsig)
+            fext = 0.5 * (1. + (sigma - s0) / dsig)
 
             qx,qy,qz = dipole(ps,x,y,z)
             bx=(bbx+qx)*fint+oimfx*fext -qx
@@ -623,7 +632,7 @@ def warped(iopt, ps, x,y,z, dxshift1, dxshift2, d, deltady, g):
     rho2=y**2+z**2
     rho=np.sqrt(rho2)
 
-    if (y == 0) & (z == 0):
+    if (y == 0) and (z == 0):
         phi=0.
         cphi=1.
         sphi=0.
@@ -864,7 +873,7 @@ def birk_tot(iopb, ps, x,y,z, xkappa1, xkappa2):
     """
 
     :param iopb: birkeland field mode flag:
-        iopb=0 - all components; iopb=1 - region 1, modes 1 & 2; iopb=2 - region 2, modes 1 & 2
+        iopb=0 - all components; iopb=1 - region 1, modes 1 and 2; iopb=2 - region 2, modes 1 and 2
     :param ps: geo-dipole tilt angle in radius.
     :param x,y,z: GSM coordinates in Re (1 Re = 6371.2 km)
     :return: bx11,by11,bz11, bx12,by12,bz12, bx21,by21,bz21, bx22,by22,bz22.
@@ -956,7 +965,7 @@ def birk_tot(iopb, ps, x,y,z, xkappa1, xkappa2):
 
     bx11,by11,bz11, bx12,by12,bz12, bx21,by21,bz21, bx22,by22,bz22 = [0]*12
 
-    if (iopb == 0) | (iopb == 1):
+    if (iopb == 0) or (iopb == 1):
         fx11,fy11,fz11 = birk_1n2(1,1,ps,x,y,z, xkappa) # region 1, mode 1
         hx11,hy11,hz11 = birk_shl(sh11,ps,x_sc,x,y,z)
         bx11=fx11+hx11
@@ -973,7 +982,7 @@ def birk_tot(iopb, ps, x,y,z, xkappa1, xkappa2):
     xkappa=xkappa2      # forwarded in birk_1n2
     x_sc=xkappa2-1.0    # forwarded in birk_shl
 
-    if (iopb == 0) | (iopb == 2):
+    if (iopb == 0) or (iopb == 2):
         fx21,fy21,fz21 = birk_1n2(2,1,ps,x,y,z, xkappa) # region 2, mode 1
         hx21,hy21,hz21 = birk_shl(sh21,ps,x_sc,x,y,z)
         bx21=fx21+hx21
@@ -1069,7 +1078,7 @@ def birk_1n2(numb,mode,ps,x,y,z, xkappa):        # NB# 6, p.60
     rsc=np.sqrt(xsc**2+ysc**2+zsc**2)   # scaled
     rho2=rho_0**2
 
-    if (xsc == 0) & (zsc == 0):
+    if (xsc == 0) and (zsc == 0):
         phi=0.
     else:
         phi=np.arctan2(-zsc,xsc)  # from cartesian to cylindrical (rho,phi,y)
@@ -1463,12 +1472,12 @@ def full_rc(iopr,ps,x,y,z, sc_sy, sc_pr, phi):
 
     x_sc=sc_sy-1
     fsx,fsy,fsz = [0.]*3
-    if (iopr == 0) | (iopr == 1):
+    if (iopr == 0) or (iopr == 1):
         fsx,fsy,fsz = rc_shield(c_sy,ps,x_sc, x,y,z)
 
     x_sc=sc_pr-1
     fpx,fpy,fpz = [0.]*3
-    if (iopr == 0) | (iopr == 2):
+    if (iopr == 0) or (iopr == 2):
         fpx,fpy,fpz = rc_shield(c_pr,ps,x_sc, x,y,z)
 
     bxsrc=hxsrc+fsx
@@ -1523,7 +1532,7 @@ def src_prc(iopr,sc_sy,sc_pr,phi,ps, x,y,z):
     # 3a. symmetric field:
     if iopr <= 1:
         bxs,bys,bzs = rc_symm(xts,yts,zts)
-    if (iopr == 0) | (iopr == 2):
+    if (iopr == 0) or (iopr == 2):
         bxa_s,bya_s,bza_s = prc_symm(xta,yta,zta)
 
     # 3b. rotate the scaled sm coordinates by phi around zsm axis and calculate quadrupole prc field in those coords:
@@ -1531,7 +1540,7 @@ def src_prc(iopr,sc_sy,sc_pr,phi,ps, x,y,z):
     sp=np.sin(phi)
     xr=xta*cp-yta*sp
     yr=xta*sp+yta*cp
-    if (iopr == 0) | (iopr == 2):
+    if (iopr == 0) or (iopr == 2):
         bxa_qr,bya_qr,bza_q = prc_quad(xr,yr,zta)
 
     # 3c.transform the quadrupole field components back to the sm coords:
@@ -1625,7 +1634,7 @@ def ap(r,sint,cost):
     prox = False
     sint1=sint
     cost1=cost
-    # too close to z-axis; use linear interpolation between sint=0 & sint=0.01
+    # too close to z-axis; use linear interpolation between sint=0 and sint=0.01
     if (sint1 < 1.e-2):
         sint1=1.e-2
         cost1=0.99994999875
@@ -1778,7 +1787,7 @@ def apprc(r,sint,cost):
     prox=False
     sint1=sint
     cost1=cost
-    # too close to z-axis; use linear interpolation between sint=0 & sint=0.01
+    # too close to z-axis; use linear interpolation between sint=0 and sint=0.01
     if (sint1 < 1.e-2):
         sint1=1.e-2
         cost1=0.99994999875

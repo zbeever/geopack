@@ -1,9 +1,9 @@
 import numpy as np
-from math import cos, sin, sqrt
+from math import cos, sin, sqrt, atan2, asin, acos, exp
 from numba import jit, njit
 
 @njit
-def t96(parmod,ps,x,y,z):
+def t96(parmod, ps, x, y, z):
     """
     Release date of this version: June 22, 1996.
 
@@ -20,66 +20,69 @@ def t96(parmod,ps,x,y,z):
         Computed as a sum of contributions from principal field sources.
     """
 
-    pdyn0,eps10 = [2.,3630.7]
-    a = np.array([1.162,22.344,18.50,2.602,6.903,5.287,0.5790,0.4462,0.7850])
-    am0,s0,x00,dsig = [70.,1.08,5.48,0.005]
-    delimfx,delimfy = [20.,10.]
-    pdyn,dst,byimf,bzimf =parmod[0:4]
+    pdyn0, eps10 = [2., 3630.7]
+    a = np.array([1.162, 22.344, 18.50, 2.602, 6.903, 5.287, 0.5790, 0.4462, 0.7850])
+    am0, s0, x00, dsig = [70., 1.08, 5.48, 0.005]
+    delimfx,  delimfy = [20., 10.]
+    pdyn, dst, byimf, bzimf =parmod[0:4]
 
-    sps=np.sin(ps)
+    sps = sin(ps)
     # depr is an estimate of total near-earth depression, based on dst and pdyn (usually, depr &lt 0 )
-    depr=0.8*dst-13.*np.sqrt(pdyn)
+    depr = 0.8 * dst - 13. * sqrt(pdyn)
 
     # calculate the imf-related quantities:
-    bt=np.sqrt(byimf**2+bzimf**2)
+    bt = sqrt(byimf**2 + bzimf**2)
 
-    if (byimf == 0) & (bzimf == 0):
-        theta = 0
+    theta = 0.
+    if byimf == 0. and bzimf == 0.:
+        theta = 0.
     else:
-        theta=np.arctan2(byimf,bzimf)
-        if theta < 0: theta += 2*np.pi
-    ct=np.cos(theta)
-    st=np.sin(theta)
-    eps=718.5*np.sqrt(pdyn)*bt*np.sin(theta/2.)
+        theta = atan2(byimf, bzimf)
+        if theta <= 0:
+            theta += 2 * np.pi
+    ct = cos(theta)
+    st = sin(theta)
+    eps = 718.5 * sqrt(pdyn) * bt * sin(theta * 0.5)
 
-    facteps=eps/eps10-1.
-    factpd=np.sqrt(pdyn/pdyn0)-1.
+    facteps = eps / eps10 - 1.
+    factpd = sqrt(pdyn / pdyn0) - 1.
     #  rcampl is the amplitude of the ring current (positive and equal to abs.value of rc depression at origin)
-    rcampl=-a[0]*depr
+    rcampl = -a[0] * depr
 
-    tampl2=a[1]+a[2]*factpd+a[3]*facteps
-    tampl3=a[4]+a[5]*factpd
-    b1ampl=a[6]+a[7]*facteps
-    b2ampl=20.*b1ampl  # it is equivalent to assuming that the total current in the region 2 system is 40% of that in region 1
-    reconn=a[8]
+    tampl2 = a[1] + a[2] * factpd + a[3] * facteps
+    tampl3 = a[4] + a[5] * factpd
+    b1ampl = a[6] + a[7] * facteps
+    b2ampl = 20. * b1ampl  # it is equivalent to assuming that the total current in the region 2 system is 40% of that in region 1
+    reconn = a[8]
 
-    xappa=(pdyn/pdyn0)**0.14
-    xappa3=xappa**3
-    ys=y*ct-z*st
-    zs=z*ct+y*st
+    xappa = (pdyn / pdyn0)**0.14
+    xappa3 = xappa**3
+    ys = y * ct - z * st
+    zs = z * ct + y * st
 
-    factimf=np.exp(x/delimfx-(ys/delimfy)**2)
+    factimf = exp(x / delimfx - (ys / delimfy)**2)
 
     # calculate the "imf" components outside the layer  (hence begin with "o")
-    oimfx=0.
-    oimfy=reconn*byimf*factimf
-    oimfz=reconn*bzimf*factimf
+    oimfx = 0.
+    oimfy = reconn * byimf * factimf
+    oimfz = reconn * bzimf * factimf
 
-    rimfampl=reconn*bt
+    rimfampl = reconn * bt
 
-    pps=ps
-    xx=x*xappa
-    yy=y*xappa
-    zz=z*xappa
+    pps = ps
+    xx = x * xappa
+    yy = y * xappa
+    zz = z * xappa
 
     # Scale and calculate the magnetopause parameters for the interpolation across
     # the boundary layer (the coordinates xx,yy,zz  are already scaled)
-    x0=x00/xappa
-    am=am0/xappa
-    rho2=y**2+z**2
-    asq=am**2
+    x0 = x00 / xappa
+    am = am0 / xappa
+    rho2 = y**2 + z**2
+    asq = am**2
     xmxm=am+x-x0
-    if xmxm < 0: xmxm = 0   # the boundary is a cylinder tailward of x=x0-am
+    if xmxm < 0:
+        xmxm = 0   # the boundary is a cylinder tailward of x=x0-am
     axx0=xmxm**2
     aro=asq+rho2
     sigma=np.sqrt((aro+axx0+np.sqrt((aro+axx0)**2-4.*asq*axx0))/(2.*asq))
@@ -89,19 +92,22 @@ def t96(parmod,ps,x,y,z):
     #    (2) in the boundary layer
     #    (3) outside the magnetosphere and b.layer
 
+
     # First of all, consider the cases (1) and (2):
     if sigma < (s0+dsig):     # cases (1) or (2); calculate the model field (with the potential "penetrated" interconnection field):
-        cfx,cfy,cfz = dipshld(pps,xx,yy,zz)
-        bxrc,byrc,bzrc,bxt2,byt2,bzt2,bxt3,byt3,bzt3 = tailrc96(sps,xx,yy,zz)
-        r1x,r1y,r1z = birk1tot_02(pps,xx,yy,zz)
-        r2x,r2y,r2z = birk2tot_02(pps,xx,yy,zz)
-        rimfx,rimfys,rimfzs = intercon(xx,ys*xappa,zs*xappa)
-        rimfy=rimfys*ct+rimfzs*st
-        rimfz=rimfzs*ct-rimfys*st
+        cfx, cfy, cfz = dipshld(pps,xx,yy,zz)
+        bxrc, byrc, bzrc, bxt2, byt2, bzt2, bxt3, byt3, bzt3 = tailrc96(sps, xx, yy, zz)
+        r1x, r1y, r1z = birk1tot_02(pps, xx, yy, zz)
+        r2x, r2y, r2z = birk2tot_02(pps, xx, yy, zz)
+        rimfx, rimfys, rimfzs = intercon(xx,ys*xappa,zs*xappa)
+        rimfy = rimfys * ct + rimfzs * st
+        rimfz = rimfzs * ct - rimfys * st
+
 
         fx=cfx*xappa3 + rcampl*bxrc+tampl2*bxt2+tampl3*bxt3+ b1ampl*r1x +b2ampl*r2x +rimfampl*rimfx
         fy=cfy*xappa3 + rcampl*byrc+tampl2*byt2+tampl3*byt3+ b1ampl*r1y +b2ampl*r2y +rimfampl*rimfy
         fz=cfz*xappa3 + rcampl*bzrc+tampl2*bzt2+tampl3*bzt3+ b1ampl*r1z +b2ampl*r2z +rimfampl*rimfz
+
 
         #  Now, let us check whether we have the case (1). if yes - we are done:
         if sigma < (s0-dsig):   # (x,y,z) is inside the magnetosphere
@@ -239,6 +245,7 @@ def cylhar1(a, x,y,z):
 
     return bx,by,bz
 
+
 @njit
 def tailrc96(sps, x,y,z):
     """
@@ -278,51 +285,51 @@ def tailrc96(sps, x,y,z):
         19.69877970,20.30095680,86.45407420,22.50403727,23.41617329,48.48140573,
         24.61031329,123.5395974,223.5367692,39.50824342,65.83385762,266.2948657])
 
-    rh,dr,g,d0,deltady = [9.,4.,10.,2.,10.]
+    rh, dr, g, d0, deltady = [9.,4.,10.,2.,10.]
 
     # To economize the code, we first calculate common variables, which are
     # the same for all modes, and put them in the common-block /warp/
-    dr2=dr*dr
-    c11=np.sqrt((1+rh)**2+dr2)
-    c12=np.sqrt((1-rh)**2+dr2)
-    c1=c11-c12
-    spsc1=sps/c1
-    rps=0.5*(c11+c12)*sps   # this is the shift of the sheet with respect to gsm eq.plane for the 3rd (asymptotic) tail mode
+    dr2 = dr**2
+    c11 = sqrt((1 + rh)**2 + dr2)
+    c12 = sqrt((1 - rh)**2 + dr2)
+    c1 = c11 - c12
+    spsc1 = sps / c1
+    rps = 0.5 * (c11 + c12) * sps   # this is the shift of the sheet with respect to gsm eq.plane for the 3rd (asymptotic) tail mode
 
-    r=np.sqrt(x*x+y*y+z*z)
-    sq1=np.sqrt((r+rh)**2+dr2)
-    sq2=np.sqrt((r-rh)**2+dr2)
-    c=sq1-sq2
-    cs=(r+rh)/sq1-(r-rh)/sq2
-    spss=spsc1/r*c
-    cpss=np.sqrt(1-spss**2)
-    dpsrr=sps/(r*r)*(cs*r-c)/np.sqrt((r*c1)**2-(c*sps)**2)
+    r = sqrt(x**2 + y**2 + z**2)
+    sq1 = sqrt((r + rh)**2 + dr2)
+    sq2 = sqrt((r - rh)**2 + dr2)
+    c = sq1 - sq2
+    cs = (r + rh) / sq1 - (r - rh) / sq2
+    spss = spsc1 / r * c
+    cpss = sqrt(1 - spss**2)
+    dpsrr= sps / r**2 * (cs * r - c) / sqrt((r * c1)**2 - (c * sps)**2)
 
-    wfac=y/(y**4+1e4)   # warping
-    w=wfac*y**3
-    ws=4e4*y*wfac**2
-    warp=g*sps*w
-    xs=x*cpss-z*spss
-    zsww=z*cpss+x*spss  # "ww" means "without y-z warping" (in x-z only)
-    zs=zsww +warp
+    wfac = y / (y**4 + 1e4)   # warping
+    w = wfac * y**3
+    ws = 4e4 * y * wfac**2
+    warp = g * sps * w
+    xs = x * cpss - z * spss
+    zsww = z * cpss + x * spss  # "ww" means "without y-z warping" (in x-z only)
+    zs = zsww + warp
 
-    dxsx=cpss-x*zsww*dpsrr
-    dxsy=-y*zsww*dpsrr
-    dxsz=-spss-z*zsww*dpsrr
-    dzsx=spss+x*xs*dpsrr
-    dzsy=xs*y*dpsrr  +g*sps*ws  # the last term is for the y-z warp
-    dzsz=cpss+xs*z*dpsrr        # (tail modes only)
+    dxsx = cpss - x * zsww * dpsrr
+    dxsy = -y * zsww * dpsrr
+    dxsz = -spss - z * zsww * dpsrr
+    dzsx = spss + x * xs * dpsrr
+    dzsy = xs * y * dpsrr + g * sps * ws  # the last term is for the y-z warp
+    dzsz = cpss + xs * z * dpsrr        # (tail modes only)
 
-    d=d0+deltady*(y/20)**2      # sheet half-thickness for the tail modes
-    dddy=deltady*y*0.005        # (thickens to flanks, but no variation along x, in contrast to ring current)
+    d = d0 + deltady * (y / 20)**2      # sheet half-thickness for the tail modes
+    dddy = deltady * y * 0.005        # (thickens to flanks, but no variation along x, in contrast to ring current)
 
-    dzetas=np.sqrt(zs**2+d**2)  # this is the same simple way to spread out the sheet, as that used in t89
-    ddzetadx=zs*dzsx/dzetas
-    ddzetady=(zs*dzsy+d*dddy)/dzetas
-    ddzetadz=zs*dzsz/dzetas
+    dzetas = sqrt(zs**2 + d**2)  # this is the same simple way to spread out the sheet, as that used in t89
+    ddzetadx = zs * dzsx / dzetas
+    ddzetady = (zs * dzsy + d * dddy) / dzetas
+    ddzetadz = zs * dzsz / dzetas
 
     wx,wy,wz = shlcar3x3(arc,x,y,z,sps)
-    hx,hy,hz = ringcurr96(x,y,z, cpss, spss, dpsrr, xs, dxsx, dxsy, dxsz, dzsx, dzsz, zs)
+    hx,hy,hz = ringcurr96(x,y,z, cpss, spss, dpsrr, xs, dxsx, dxsy, dxsz, dzsx, dzsz, zsww)
     bxrc=wx+hx
     byrc=wy+hy
     bzrc=wz+hz
@@ -413,7 +420,7 @@ def shlcar3x3(a, x,y,z, sps):
     return hx,hy,hz
 
 @njit
-def ringcurr96(x,y,z, cpss, spss, dpsrr, xs, dxsx, dxsy, dxsz, dzsx, dzsz, zs):
+def ringcurr96(x,y,z, cpss, spss, dpsrr, xs, dxsx, dxsy, dxsz, dzsx, dzsz, zsww):
     """
     This subroutine computes the components of the ring current field, similar to
     that described by Tsyganenko and Peredo (1994). The difference is that now
@@ -437,29 +444,36 @@ def ringcurr96(x,y,z, cpss, spss, dpsrr, xs, dxsx, dxsy, dxsz, dzsx, dzsz, zs):
     beta = np.array([2.722188,3.766875])
 
     # no warping in the y-z plane (along x only), and this is why we do not use  dzsy from the common-block
-    dzsy=xs*y*dpsrr
-    xxd=x-xd
-    fdx=0.5*(1+xxd/np.sqrt(xxd**2+xldx**2))
-    dddx=deltadx*0.5*xldx**2/np.sqrt(xxd**2+xldx**2)**3
-    d=d0+deltadx*fdx
+    dzsy = xs * y * dpsrr
+    xxd = x - xd
+    fdx = 0.5 * (1 + xxd / sqrt(xxd**2 + xldx**2))
+    dddx = deltadx * 0.5 * xldx**2 / sqrt(xxd**2 + xldx**2)**3
+    d = d0 + deltadx * fdx
 
     # this is the same simple way to spread out the sheet, as that used in t89
-    dzetas=np.sqrt(zs**2+d**2)
-    rhos=  np.sqrt(xs**2+y**2)
-    ddzetadx=(zs*dzsx+d*dddx)/dzetas
-    ddzetady=zs*dzsy/dzetas
-    ddzetadz=zs*dzsz/dzetas
+    dzetas = sqrt(zsww**2 + d**2)
+    rhos = sqrt(xs**2 + y**2)
+    ddzetadx = (zsww * dzsx + d * dddx) / dzetas
+    ddzetady = zsww * dzsy / dzetas
+    ddzetadz = zsww * dzsz / dzetas
+
+    drhosdx = 0.
+    drhosdy = 0.
+    drhosdz = 0.
 
     if rhos < 1e-5:
-        drhosdx=0
-        drhosdy=np.sign(y)
-        drhosdz=0
+        drhosdx = 0.
+        drhosdy = np.sign(y)
+        drhosdz = 0.
     else:
-        drhosdx=xs*dxsx/rhos
-        drhosdy=(xs*dxsy+y)/rhos
-        drhosdz=xs*dxsz/rhos
+        drhosdx = xs * dxsx / rhos
+        drhosdy = (xs * dxsy + y) / rhos
+        drhosdz = xs * dxsz / rhos
 
-    [bx,by,bz] = [0.]*3
+
+    bx = 0.
+    by = 0.
+    bz = 0.
 
     for i in range(2):
         bi = beta[i]
@@ -492,9 +506,9 @@ def ringcurr96(x,y,z, cpss, spss, dpsrr, xs, dxsx, dxsy, dxsz, dzsx, dzsz, zs):
         dasdy=dasds1*ds1dy+dasds2*ds2dy
         dasdz=dasds1*ds1dz+dasds2*ds2dz
 
-        bx=bx+f[i]*((2*as0+y*dasdy)*spss-xs*dasdz+as0*dpsrr*(y**2*cpss+z*zs))
+        bx=bx+f[i]*((2*as0+y*dasdy)*spss-xs*dasdz+as0*dpsrr*(y**2*cpss+z*zsww))
         by=by-f[i]*y*(as0*dpsrr*xs+dasdz*cpss+dasdx*spss)
-        bz=bz+f[i]*((2*as0+y*dasdy)*cpss+xs*dasdx-as0*dpsrr*(x*zs+y**2*spss))
+        bz=bz+f[i]*((2*as0+y*dasdy)*cpss+xs*dasdx-as0*dpsrr*(x*zsww+y**2*spss))
 
     return bx,by,bz
 
@@ -660,7 +674,7 @@ def tail87(x, z, rps, warp):
 
 
 @njit
-def birk1tot_02(ps, x,y,z):
+def birk1tot_02(ps, x, y, z):
     """
     This is the second version of the analytical model of the region I field based on a separate
     representation of the potential field in the inner and outer space, mapped by means of a
@@ -675,106 +689,110 @@ def birk1tot_02(ps, x,y,z):
     # common /coord21/ xx2(14),yy2(14),zz2(14)
     # common /dx1/ dx,scalein,scaleout
 
-    c1 = np.array([
-        -0.911582e-3,-0.376654e-2,-0.727423e-2,-0.270084e-2,-0.123899e-2,
-        -0.154387e-2,-0.340040e-2,-0.191858e-1,-0.518979e-1,0.635061e-1,
-        0.440680,-0.396570,0.561238e-2,0.160938e-2,-0.451229e-2,
-        -0.251810e-2,-0.151599e-2,-0.133665e-2,-0.962089e-3,-0.272085e-1,
-        -0.524319e-1,0.717024e-1,0.523439,-0.405015,-89.5587,23.2806])
-
-    c2 = np.array([
-        6.04133,.305415,.606066e-02,.128379e-03,-.179406e-04,
-        1.41714,-27.2586,-4.28833,-1.30675,35.5607,8.95792,.961617e-3,
-        -.801477e-3,-.782795e-3,-1.65242,-16.5242,-5.33798,.424878e-3,
-        .331787e-3,-.704305e-3,.844342e-3,.953682e-4,.886271e-3,
-        25.1120,20.9299,5.14569,-44.1670,-51.0672,-1.87725,20.2998,
-        48.7505,-2.97415,3.35184,-54.2921,-.838712,-10.5123,70.7594,
-        -4.94104,.106166e-3,.465791e-3,-.193719e-3,10.8439,-29.7968,
-         8.08068,.463507e-3,-.224475e-4,.177035e-3,-.317581e-3,
-        -.264487e-3,.102075e-3,7.71390,10.1915,-4.99797,-23.1114,
-        29.2043,12.2928,10.9542,33.6671,-9.3851,.174615e-3,-.789777e-6,
-        .686047e-3,.460104e-4,-.345216e-2,.221871e-2,.110078e-1,
-        -.661373e-2,.249201e-2,.343978e-1,-.193145e-5,.493963e-5,
-        -.535748e-4,.191833e-4,-.100496e-3,-.210103e-3,-.232195e-2,
-        .315335e-2,-.134320e-1,-.263222e-1])
-    tilt,xcentre,radius,dipx,dipy = (1.00891, [2.28397,-5.60831], [1.86106,7.83281], 1.12541, 0.945719)
-    dx,scalein,scaleout = [-0.16,0.08,0.4]
-    xx1 = np.array([-11.,-7,-7,-3,-3,1,1,1,5,5,9,9])
-    yy1 = np.array([2.,0,4,2,6,0,4,8,2,6,0,4])
-    xx2 = np.array([-10.,-7,-4,-4,0,4,4,7,10,0,0,0,0,0])
-    yy2 = np.array([3.,6,3,9,6,3,9,6,3,0,0,0,0,0])
-    zz2 = np.array([20.,20,4,20,4,4,20,20,20,2,3,4.5,7,10])
+    
+    c1 = [ -9.11582e-4,-.00376654,-.00727423,-.00270084,
+	    -.00123899,-.00154387,-.0034004,-.0191858,-.0518979,.0635061,
+	    .44068,-.39657,.00561238,.00160938,-.00451229,-.0025181,
+	    -.00151599,-.00133665,-9.62089e-4,-.0272085,-.0524319,.0717024,
+	    .523439,-.405015,-89.5587,23.2806 ]
+    c2 = [ 6.04133,.305415,.00606066,1.28379e-4,
+	    -1.79406e-5,1.41714,-27.2586,-4.28833,-1.30675,35.5607,8.95792,
+	    9.61617e-4,-8.01477e-4,-7.82795e-4,-1.65242,-16.5242,-5.33798,
+	    4.24878e-4,3.31787e-4,-7.04305e-4,8.44342e-4,9.53682e-5,
+	    8.86271e-4,25.112,20.9299,5.14569,-44.167,-51.0672,-1.87725,
+	    20.2998,48.7505,-2.97415,3.35184,-54.2921,-.838712,-10.5123,
+	    70.7594,-4.94104,1.06166e-4,4.65791e-4,-1.93719e-4,10.8439,
+	    -29.7968,8.08068,4.63507e-4,-2.24475e-5,1.77035e-4,-3.17581e-4,
+	    -2.64487e-4,1.02075e-4,7.7139,10.1915,-4.99797,-23.1114,-29.2043,
+	    12.2928,10.9542,33.6671,-9.3851,1.74615e-4,-7.89777e-7,6.86047e-4,
+	    4.60104e-5,-.00345216,.00221871,.0110078,-.00661373,.00249201,
+	    .0343978,-1.93145e-6,4.93963e-6,-5.35748e-5,1.91833e-5,
+	    -1.00496e-4,-2.10103e-4,-.00232195,.00315335,-.013432,-.0263222 ]
+    xltday = 78.
+    xltnght = 70.
+    dtet0 = .034906
 
     # rh is the "hinging distance" and dr is the transition scale length, defining the curvature of the warping (see p.89, NB #2)
-    rh,dr = [9.,4.]
-
-    # these are latitudes of the r-1 oval at noon and at midnight
-    xltday,xltnght = [78.,70.]
-
-    # this is the latitudinal half-thickness of the r-1 oval (the interpolation region between the high-lat. and the plasma sheet)
-    dtet0 = 0.034906
+    rh,dr = [9., 4.]
 
     # Here we assume that the positions of the northern and southern r-1 ovals are symmetric in the sm-coordinates
-    tnoonn=(90-xltday)*0.01745329
-    tnoons=np.pi-tnoonn
-    dtetdn=(xltday-xltnght)*0.01745329
-    dr2=dr**2
+    tnoonn = (90. - xltday) * 0.01745329
+    tnoons = np.pi - tnoonn
+    dtetdn = (xltday - xltnght) * 0.01745329
+    dr2 = dr**2
 
-    sps=np.sin(ps)
-    r2=x**2+y**2+z**2
-    r=np.sqrt(r2)
-    r3=r*r2
+    sps = np.sin(ps)
 
-    rmrh=r-rh
-    rprh=r+rh
-    sqm=np.sqrt(rmrh**2+dr2)
-    sqp=np.sqrt(rprh**2+dr2)
-    c=sqp-sqm
-    q=np.sqrt((rh+1)**2+dr2)-np.sqrt((rh-1)**2+dr2)
-    spsas=sps/r*c/q
-    cpsas=np.sqrt(1-spsas**2)
-    xas = x*cpsas-z*spsas
-    zas = x*spsas+z*cpsas
+
+    r2 = x**2 + y**2 + z**2
+    r = np.sqrt(r2)
+    r3 = r * r2
+
+
+    rmrh = r - rh
+    rprh = r + rh
+
+    sqm = sqrt(rmrh**2 + dr2)
+    sqp = sqrt(rprh**2 + dr2)
+
+    c = sqp - sqm
+    q = sqrt((rh + 1.)**2 + dr2) - sqrt((rh - 1.)**2 + dr2)
+    spsas = sps / r * c / q
+
+    cpsas = np.sqrt(1. - spsas**2)
+    xas = x * cpsas - z * spsas
+    zas = x * spsas + z * cpsas
     pas = 0.
-    if (xas != 0) & (y != 0):
-        pas = np.arctan2(y,xas)
-    tas=np.arctan2(np.sqrt(xas**2+y**2),zas)
-    stas=np.sin(tas)
-    f=stas/(stas**6*(1-r3)+r3)**0.1666666667
+    if xas != 0. or y != 0.:
+        pas = atan2(y, xas)
 
-    tet0=np.arcsin(f)
-    if tas > 1.5707963: tet0=np.pi-tet0
-    dtet=dtetdn*np.sin(pas*0.5)**2
-    tetr1n=tnoonn+dtet
-    tetr1s=tnoons-dtet
+
+    tas = atan2(sqrt(xas**2 + y**2), zas)
+    stas = np.sin(tas)
+
+    
+    f = stas / (stas**6 * (1. - r3) + r3)**0.1666666667
+    
+
+    tet0 = asin(f)
+    if tas > np.pi / 2:
+        tet0 = np.pi - tet0
+
+
+    dtet = dtetdn * np.sin(pas * 0.5)**2
+    tetr1n = tnoonn + dtet
+    tetr1s = tnoons - dtet
+
 
     # Now let's define which of the four regions (high-lat., northern psbl,
     # plasma sheet, southern psbl) does the point (x,y,z) belong to:
     # tetr1s is greater than tetr1n. That's why high lat is when tetr1n<tetr1n-dtet0. -Sheng.
     loc = 0
-    if (tet0 < tetr1n-dtet0) | (tet0 > tetr1s+dtet0):   loc = 1   # high-lat
-    if (tet0 > tetr1n+dtet0) & (tet0 < tetr1s-dtet0):   loc = 2   # pl.sheet
-    if (tet0 >= tetr1n-dtet0) & (tet0 <= tetr1n+dtet0): loc = 3 # north psbl
-    if (tet0 >= tetr1s-dtet0) & (tet0 <= tetr1s+dtet0): loc = 4 # south psbl
+    if tet0 < tetr1n - dtet0 or tet0 > tetr1s + dtet0:
+        loc = 1   # high-lat
+    if tet0 > tetr1n + dtet0 and tet0 < tetr1s - dtet0:
+        loc = 2   # pl.sheet
+    if tet0 >= tetr1n - dtet0 and tet0 <= tetr1n + dtet0:
+        loc = 3 # north psbl
+    if tet0 >= tetr1s - dtet0 and tet0 <= tetr1s + dtet0:
+        loc = 4 # south psbl
+
 
     bx, by, bz = (0.0, 0.0, 0.0)
     # in the high-lat. region use the subroutine dipoct
     if loc == 1:
-        xi = [x,y,z,ps]
-        diploop1_params = (xx1, yy1, tilt,xcentre, radius, dipx, dipy, rh, dr)
-        d1 = diploop1(xi, diploop1_params)
+        d1 = diploop1(x, y, z, ps)
         for i in range(26):
             bx=bx+c1[i]*d1[0,i]
             by=by+c1[i]*d1[1,i]
             bz=bz+c1[i]*d1[2,i]
     elif loc == 2:
-        xi = [x,y,z,ps]
-        condip1_params = (xx2, yy2, zz2, dx, scalein, scaleout)
-        d2 = condip1(xi, condip1_params)
+        d2 = condip1(x, y, z, ps)
         for i in range(79):
-            bx=bx+c2[i]*d2[0,i]
-            by=by+c2[i]*d2[1,i]
-            bz=bz+c2[i]*d2[2,i]
+            # GETS OFF AT i = 20
+            bx = bx + c2[i] * d2[0, i]
+            by = by + c2[i] * d2[1, i]
+            bz = bz + c2[i] * d2[2, i]
     elif loc == 3:
         t01=tetr1n-dtet0
         t02=tetr1n+dtet0
@@ -790,9 +808,7 @@ def birk1tot_02(ps, x,y,z):
         zas1=r*ct01as
         x1= xas1*cpsas+zas1*spsas
         z1=-xas1*spsas+zas1*cpsas
-        xi = [x1,y1,z1,ps]
-        diploop1_params = (xx1, yy1, tilt,xcentre, radius, dipx, dipy, rh, dr)
-        d1 = diploop1(xi, diploop1_params)
+        d1 = diploop1(x1, y1, z1, ps)
         # bx1,by1,bz1 are field components in the northern boundary point
         bx1,by1,bz1 = [0.]*3
         for i in range(26):
@@ -806,9 +822,7 @@ def birk1tot_02(ps, x,y,z):
         zas2=r*ct02as
         x2= xas2*cpsas+zas2*spsas
         z2=-xas2*spsas+zas2*cpsas
-        xi = [x2,y2,z2,ps]
-        condip1_params = (xx2, yy2, zz2, dx, scalein, scaleout)
-        d2 = condip1(xi, condip1_params)
+        d2 = condip1(x2, y2, z2, ps)
         # bx2,by2,bz2 are field components in the southern boundary point
         bx2,by2,bz2 = [0.]*3
         for i in range(79):
@@ -838,9 +852,7 @@ def birk1tot_02(ps, x,y,z):
         zas1=r*ct01as
         x1= xas1*cpsas+zas1*spsas
         z1=-xas1*spsas+zas1*cpsas
-        xi = np.array([x1,y1,z1,ps])
-        condip1_params = (xx2, yy2, zz2, dx, scalein, scaleout)
-        d2 = condip1(xi, condip1_params)
+        d2 = condip1(x1, y1, z1, ps)
         # bx1,by1,bz1 are field components in the northern boundary point
         bx1,by1,bz1 = np.zeros(3)
         for i in range(79):
@@ -848,21 +860,21 @@ def birk1tot_02(ps, x,y,z):
             by1=by1+c2[i]*d2[1,i]
             bz1=bz1+c2[i]*d2[2,i]
 
+
         # x2,y2,z2 are coords of the southern boundary point
         xas2=r*st02as*np.cos(pas)
         y2=  r*st02as*np.sin(pas)
         zas2=r*ct02as
         x2= xas2*cpsas+zas2*spsas
         z2=-xas2*spsas+zas2*cpsas
-        xi = np.array([x1,y1,z1,ps])
-        diploop1_params = (xx1, yy1, tilt,xcentre, radius, dipx, dipy, rh, dr)
-        d1 = diploop1(xi, diploop1_params)
+        d1 = diploop1(x2, y2, z2, ps)
         # bx2,by2,bz2 are field components in the southern boundary point
         bx2,by2,bz2 = [0.]*3
         for i in range(26):
             bx2=bx2+c1[i]*d1[0,i]
             by2=by2+c1[i]*d1[1,i]
             bz2=bz2+c1[i]*d1[2,i]
+
 
         # now interpolate:
         ss=np.sqrt((x2-x1)**2+(y2-y1)**2+(z2-z1)**2)
@@ -882,8 +894,10 @@ def birk1tot_02(ps, x,y,z):
 
     return bx,by,bz
 
+
+# WORKS
 @njit
-def diploop1(xi, diploop1_params):
+def diploop1(x, y, z, ps):
     """
     Calculates dependent model variables and their derivatives for given independent variables
     and model parameters. Specifies model functions with free parameters which must be determined
@@ -901,11 +915,19 @@ def diploop1(xi, diploop1_params):
     # common /coord11/ xx1(12),yy1(12)
     # common /loopdip1/ tilt,xcentre(2),radius(2),  dipx,dipy
     # common /rhdr/rh,dr
-    xx1,yy1, tilt,xcentre,radius, dipx,dipy, rh,dr = diploop1_params
+    xx1 = [-11., -7., -7., -3., -3., 1., 1., 1., 5., 5., 9., 9.]
+    yy1 = [  2.,  0.,  4.,  2.,  6., 0., 4., 8., 2., 6., 0., 4.]
+    rh = 9.0
+    dr = 4.0
+    tilt = 1.00891
+    xcentre = [2.28397, -5.60831]
+    radius = [1.86106, 7.83281]
+    dipx = 1.12541
+    dipy = .945719
 
-    x,y,z, ps = xi
-    sps=np.sin(ps)
+    sps = np.sin(ps)
     d = np.empty((3,26))
+
 
     for i in range(12):
         r2=(xx1[i]*dipx)**2+(yy1[i]*dipy)**2
@@ -977,6 +999,7 @@ def diploop1(xi, diploop1_params):
 
     return d
 
+# WORKS
 @njit
 def dipxyz(x,y,z):
     """
@@ -1009,6 +1032,7 @@ def dipxyz(x,y,z):
     return bxx,byx,bzx,bxy,byy,bzy,bxz,byz,bzz
 
 
+# WORKS
 @njit
 def crosslp(x,y,z,xc,rl,al):
     """
@@ -1038,6 +1062,8 @@ def crosslp(x,y,z,xc,rl,al):
 
     return bx,by,bz
 
+
+# WORKS
 @njit
 def circle(x,y,z,rl):
     """
@@ -1075,8 +1101,9 @@ def circle(x,y,z,rl):
     return bx,by,bz
 
 
+# WORKS
 @njit
-def condip1(xi, condip1_params):
+def condip1(x, y, z, ps):
     """
     Calculates dependent model variables and their derivatives for given independent variables
     and model parameters. Specifies model functions with free parameters which must be determined
@@ -1093,19 +1120,21 @@ def condip1(xi, condip1_params):
     # common /dx1/ dx,scalein,scaleout
     # common /coord21/ xx(14),yy(14),zz(14)
 
-    xx2, yy2, zz2, dx, scalein, scaleout = condip1_params
+    xx2 = np.array([-10.,-7,-4,-4,0,4,4,7,10,0,0,0,0,0])
+    yy2 = np.array([3.,6,3,9,6,3,9,6,3,0,0,0,0,0])
+    zz2 = np.array([20.,20,4,20,4,4,20,20,20,2,3,4.5,7,10])
+    dx,scalein,scaleout = [-0.16,0.08,0.4]
 
-    x,y,z, ps = xi
-    sps=np.sin(ps)
-    cps=np.cos(ps)
-    d = np.empty((3,79))
+    sps = sin(ps)
+    cps = cos(ps)
+    d = np.empty((3, 79))
     cf = np.empty(5)
     sf = np.empty(5)
 
-    xsm=x*cps-z*sps-dx
-    zsm=z*cps+x*sps
-    ro2=xsm**2+y**2
-    ro=np.sqrt(ro2)
+    xsm = x * cps - z * sps - dx
+    zsm = z * cps + x * sps
+    ro2 = xsm**2 + y**2
+    ro = sqrt(ro2)
 
     cf[0]=xsm/ro
     sf[0]=y/ro
@@ -1145,7 +1174,7 @@ def condip1(xi, condip1_params):
 
     # init d[:,5:32] and d[:,32:59]
     for i in range(9):
-        if (i == 2) | (i == 4) | (i == 6):
+        if i == 2 or i == 4 or i == 5:
             xd = xx2[i]*scalein
             yd = yy2[i]*scalein
         else:
@@ -1218,6 +1247,7 @@ def condip1(xi, condip1_params):
     return d
 
 
+# WORKS
 @njit
 def birk1shld(ps, x,y,z):
     """
@@ -1304,6 +1334,8 @@ def birk1shld(ps, x,y,z):
 
     return bx,by,bz
 
+
+# WORKS
 @njit
 def birk2tot_02(ps, x,y,z):
     """
@@ -1321,6 +1353,8 @@ def birk2tot_02(ps, x,y,z):
 
     return bx,by,bz
 
+
+# WORKS
 @njit
 def birk2shl(x,y,z, ps):
     """
@@ -1400,6 +1434,8 @@ def birk2shl(x,y,z, ps):
                     l += 1
     return hx,hy,hz
 
+
+# WORKS
 @njit
 def r2_birk(x,y,z, ps):
     """
@@ -1410,8 +1446,63 @@ def r2_birk(x,y,z, ps):
     :return:
     """
 
-    delarg, delarg1 = [0.03, 0.015]
 
+    delarg, delarg1, psi = [0.03, 0.015, 10.]
+    d = psi - ps
+    cps = 0.
+    sps = 0.
+
+    if abs(d) > 1e-10:
+        psi = ps
+        cps = cos(ps)
+        sps = sin(ps)
+
+    xsm = x * cps - z * sps
+    zsm = z * cps + x * sps
+
+    xks = xksi(xsm, y, zsm)
+
+    if xks < -(delarg + delarg1):
+        bxsm, by, bzsm = r2outer(xsm, y, zsm)
+        bxsm = -bxsm * .02
+        by   = -by * .02
+        bzsm = -bzsm * .02
+    
+    if xks >= -(delarg + delarg1) and xks < -delarg + delarg1:
+        bxsm1, by1, bzsm1 = r2outer(xsm, y, zsm)
+        bxsm2, by2, bzsm2 = r2sheet(xsm, y, zsm)
+        f2 = tksi(xks, -delarg, delarg1) * -0.02
+        f1 = -0.02 - f2
+        bxsm = bxsm1 * f1 + bxsm2 * f2
+        by = by1 * f1 + by2 * f2
+        bzsm = bzsm1 * f1 + bzsm2 * f2
+    
+    if xks >= -delarg + delarg1 and xks < delarg - delarg1:
+        bxsm, by, bzsm = r2sheet(xsm, y, zsm)
+        bxsm = -bxsm * .02
+        by = -by * .02
+        bzsm = -bzsm * .02
+    
+    if xks >= delarg - delarg1 and xks < delarg + delarg1:
+        bxsm1, by1, bzsm1 = r2inner(xsm, y, zsm)
+        bxsm2, by2, bzsm2 = r2sheet(xsm, y, zsm)
+        f1 = tksi(xks, delarg, delarg1) * -0.02
+        f2 = -0.02 - f1
+        bxsm = bxsm1 * f1 + bxsm2 * f2
+        by = by1 * f1 + by2 * f2
+        bzsm = bzsm1 * f1 + bzsm2 * f2
+    
+    if xks >= delarg + delarg1:
+        bxsm, by, bzsm = r2inner(xsm, y, zsm)
+        bxsm = -bxsm * .02
+        by = -by * .02
+        bzsm = -bzsm * .02
+
+
+    bx = bxsm * cps + bzsm * sps;
+    bz = bzsm * cps - bxsm * sps;
+
+    '''
     psi = ps
     cps = np.cos(ps)
     sps = np.sin(ps)
@@ -1446,9 +1537,12 @@ def r2_birk(x,y,z, ps):
 
     bx=bxsm*cps+bzsm*sps
     bz=bzsm*cps-bxsm*sps
+    '''
 
     return bx,by,bz
 
+
+# WORKS
 @njit
 def xksi(x,y,z):
     """
@@ -1497,6 +1591,8 @@ def xksi(x,y,z):
 
     return xksi
 
+
+# WORKS
 @njit
 def tksi(xksi,xks0,dxksi):
 
@@ -1517,6 +1613,7 @@ def tksi(xksi,xks0,dxksi):
     return tksii
 
 
+# WORKS
 @njit
 def fexp(s,a):
     # TODO the function is not continuous in a???
@@ -1525,6 +1622,8 @@ def fexp(s,a):
     else:
         return s*np.exp(a*(s*s-1))
 
+
+# WORKS
 @njit
 def fexp1(s,a):
     # TODO the function is not continuous in a???
@@ -1534,6 +1633,7 @@ def fexp1(s,a):
         return np.exp(a*(s*s-1))
 
 
+# WORKS
 @njit
 def r2outer(x,y,z):
     """
@@ -1564,6 +1664,8 @@ def r2outer(x,y,z):
 
     return bx,by,bz
 
+
+# WORKS
 @njit
 def loops4(x,y,z,xc,yc,zc,r,theta,phi):
     """
@@ -1640,6 +1742,7 @@ def loops4(x,y,z,xc,yc,zc,r,theta,phi):
     return bx,by,bz
 
 
+# WORKS
 @njit
 def r2sheet(x,y,z):
     """
@@ -1755,6 +1858,7 @@ def r2sheet(x,y,z):
     return bx,by,bz
 
 
+# WORKS
 @njit
 def r2inner(x, y, z):
     pl1, pl2, pl3, pl4, pl5, pl6, pl7, pl8 = [154.185, -2.12446, 0.601735e-1, -0.153954e-2, 0.355077e-4, 29.9996, 262.886, 99.9132]
@@ -1775,6 +1879,7 @@ def r2inner(x, y, z):
     return bx, by, bz
 
 
+# PROBABLY WORKS
 @njit
 def bconic(x,y,z,nmax):
     """
@@ -1826,6 +1931,7 @@ def bconic(x,y,z,nmax):
     return cbx,cby,cbz
 
 
+# WORKS
 @njit
 def dipdistr(x, y, z, mode):
     """
@@ -1857,6 +1963,7 @@ def dipdistr(x, y, z, mode):
     return bx, by, bz
 
 
+# WORKS
 @njit
 def intercon(x,y,z):
     """
@@ -1912,6 +2019,7 @@ def intercon(x,y,z):
     return bx, by, bz
 
 
+# WORKS
 @njit
 def dipole(ps, x, y, z):
     """
