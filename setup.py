@@ -1,4 +1,3 @@
-# python geopack  setup.py
 import setuptools
 
 with open('README.md', 'r') as fh:
